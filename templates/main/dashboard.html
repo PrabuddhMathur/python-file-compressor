@@ -1,0 +1,808 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - PDF Compressor{% endblock %}
+
+{% block extra_head %}
+<style>
+    .upload-area {
+        border: 2px dashed #d1d5db !important;
+        background: #ffffff !important;
+        background-image: none !important;
+        transition: all 0.3s ease !important;
+    }
+    .upload-area:hover {
+        border-color: #6b7280 !important;
+        background: #ffffff !important;
+        background-image: none !important;
+        transform: none !important;
+    }
+    .upload-area.drag-over {
+        border-color: #3b82f6 !important;
+        background: #eff6ff !important;
+        background-image: none !important;
+    }
+    .profile-card {
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+    .profile-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+    }
+    .profile-card.selected {
+        border-color: #3b82f6;
+        background-color: #eff6ff;
+        box-shadow: 0 0 0 2px #3b82f6;
+    }
+    .prediction-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .analysis-card {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    }
+    .optimization-card {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    }
+    .slider-container {
+        position: relative;
+    }
+    .slider-tooltip {
+        position: absolute;
+        top: -30px;
+        transform: translateX(-50%);
+        background: #1f2937;
+        color: white;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        white-space: nowrap;
+        opacity: 0;
+        transition: opacity 0.3s;
+    }
+    .slider-tooltip.show {
+        opacity: 1;
+    }
+    .file-analysis {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    .stage-indicator {
+        transition: all 0.3s ease;
+    }
+    .stage-indicator.active {
+        background: #3b82f6;
+        color: white;
+    }
+    .stage-indicator.completed {
+        background: #10b981;
+        color: white;
+    }
+    
+    /* Modern quality selection styling */
+    .quality-option {
+        transition: all 0.2s ease;
+    }
+    
+    .quality-option.selected .quality-check {
+        display: block !important;
+    }
+    
+    .quality-option.selected > div {
+        border-color: #3b82f6 !important;
+        background-color: #eff6ff !important;
+        box-shadow: 0 2px 4px rgba(59, 130, 246, 0.1);
+    }
+    
+    .quality-option:not(.selected) .quality-check {
+        display: none;
+    }
+    
+    .quality-option:hover > div {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        border-color: #3b82f6;
+    }
+    
+    .quality-check {
+        transition: all 0.2s ease;
+    }
+    
+    .quality-option > div {
+        border-width: 1px !important;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <!-- Welcome Section with Advanced Features Overview -->
+        <!-- Welcome Section -->
+    <div class="bg-white overflow-hidden shadow rounded-lg">
+        <div class="px-4 py-5 sm:p-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-lg leading-6 font-medium text-gray-900">
+                        Welcome, {{ current_user.full_name }}!
+                    </h3>
+                    <div class="mt-2 max-w-xl text-sm text-gray-500">
+                        <p>Compress your PDF files easily with intelligent optimization and quality control.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Usage Statistics with Enhanced Metrics -->
+    <div class="bg-white overflow-hidden shadow rounded-lg">
+        <div class="px-4 py-5 sm:p-6">
+            <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">
+                Usage Statistics & Performance
+            </h3>
+            <dl class="grid grid-cols-1 gap-5 sm:grid-cols-4">
+                <div>
+                    <dt class="text-sm font-medium text-gray-500 truncate">
+                        Files Today
+                    </dt>
+                    <dd class="mt-1 text-3xl font-semibold text-gray-900">
+                        {{ quota_info.daily_usage.files }}/{{ quota_info.daily_limits.files }}
+                    </dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500 truncate">
+                        Storage Today (MB)
+                    </dt>
+                    <dd class="mt-1 text-3xl font-semibold text-gray-900">
+                        {{ "%.1f" | format(quota_info.daily_usage.storage_mb) }}/{{ quota_info.daily_limits.storage_mb }}
+                    </dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500 truncate">
+                        Avg. Compression
+                    </dt>
+                    <dd class="mt-1 text-3xl font-semibold text-green-600">
+                        <span id="avgCompression">65%</span>
+                    </dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500 truncate">
+                        Total Saved (MB)
+                    </dt>
+                    <dd class="mt-1 text-3xl font-semibold text-blue-600">
+                        <span id="totalSaved">{{ "%.1f" | format(quota_info.session_usage.storage_mb * 0.65) }}</span>
+                    </dd>
+                </div>
+            </dl>
+            
+            {% if quota_info.session_usage.files > 0 %}
+            <div class="mt-4">
+                <button onclick="clearSession()" 
+                        class="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                    Clear Session Files
+                </button>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- PDF Upload Interface -->
+    <div class="bg-white overflow-hidden shadow rounded-lg">
+        <div class="px-4 py-5 sm:p-6">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-lg leading-6 font-medium text-gray-900">
+                    PDF Compression
+                </h3>
+            </div>
+            
+            <form id="uploadForm" enctype="multipart/form-data" class="space-y-6">
+                <!-- File Drop Area -->
+                <div id="dropArea" class="upload-area rounded-lg p-8 text-center relative">
+                    <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                        <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                    <div class="mt-4">
+                        <label for="fileInput" class="cursor-pointer">
+                            <span class="mt-2 block text-sm font-medium text-gray-900">
+                                Drag and drop PDF files here, or click to select
+                            </span>
+                            <input id="fileInput" name="file" type="file" class="sr-only" accept=".pdf">
+                        </label>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2">
+                        Maximum file size: 25MB per file • Supports batch processing up to 10 files
+                    </p>
+                    
+                    <!-- File Preview Area -->
+                    <div id="filePreview" class="mt-4 hidden">
+                        <div id="fileList" class="space-y-2"></div>
+                        <div class="mt-4 p-4 bg-blue-50 rounded-lg">
+                            <div class="flex items-center justify-between">
+                                <span class="text-sm font-medium text-blue-800">
+                                    <span id="fileCount">0</span> files selected
+                                </span>
+                                <span class="text-sm text-blue-600">
+                                    Total size: <span id="totalSize">0 MB</span>
+                                </span>
+                            </div>
+                            <div class="mt-2">
+                                <button type="button" id="analyzeFiles" class="text-sm text-blue-600 hover:text-blue-800 font-medium">
+                                    Analyze files before processing →
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quality Reduction Settings -->
+                <div id="qualitySettings">
+                    <label class="text-base font-medium text-gray-900">Compression Level</label>
+                    <p class="text-sm leading-5 text-gray-500 mb-4">Select the optimal balance between file size and quality for your needs.</p>
+                    
+                    <div class="bg-gray-50 rounded-lg p-6">
+                        <div class="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                            <!-- Minimal Compression -->
+                            <label class="quality-option cursor-pointer group">
+                                <input type="radio" name="quality" value="20" class="sr-only quality-radio">
+                                <div class="relative p-4 bg-white rounded-lg border border-gray-200 transition-all duration-200 hover:border-blue-300 hover:shadow-sm">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="w-2 h-2 rounded-full bg-green-500"></div>
+                                            <span class="font-semibold text-gray-900">Minimal</span>
+                                        </div>
+                                        <div class="quality-check hidden">
+                                            <div class="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center">
+                                                <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                                </svg>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="text-sm text-gray-600 mb-2">Preserve maximum quality</p>
+                                    <div class="flex justify-between text-xs text-gray-500">
+                                        <span>Large files</span>
+                                        <span>Best quality</span>
+                                    </div>
+                                </div>
+                            </label>
+
+                            <!-- Light Compression -->
+                            <label class="quality-option cursor-pointer group">
+                                <input type="radio" name="quality" value="30" class="sr-only quality-radio">
+                                <div class="relative p-4 bg-white rounded-lg border border-gray-200 transition-all duration-200 hover:border-blue-300 hover:shadow-sm">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="w-2 h-2 rounded-full bg-blue-500"></div>
+                                            <span class="font-semibold text-gray-900">Light</span>
+                                        </div>
+                                        <div class="quality-check hidden">
+                                            <div class="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center">
+                                                <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                                </svg>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="text-sm text-gray-600 mb-2">High quality with size reduction</p>
+                                    <div class="flex justify-between text-xs text-gray-500">
+                                        <span>Medium-large files</span>
+                                        <span>High quality</span>
+                                    </div>
+                                </div>
+                            </label>
+
+                            <!-- Medium Compression -->
+                            <label class="quality-option cursor-pointer group">
+                                <input type="radio" name="quality" value="40" class="sr-only quality-radio">
+                                <div class="relative p-4 bg-white rounded-lg border border-gray-200 transition-all duration-200 hover:border-blue-300 hover:shadow-sm">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="w-2 h-2 rounded-full bg-indigo-500"></div>
+                                            <span class="font-semibold text-gray-900">Medium</span>
+                                        </div>
+                                        <div class="quality-check hidden">
+                                            <div class="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center">
+                                                <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                                </svg>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="text-sm text-gray-600 mb-2">Good quality with size savings</p>
+                                    <div class="flex justify-between text-xs text-gray-500">
+                                        <span>Medium files</span>
+                                        <span>Good quality</span>
+                                    </div>
+                                </div>
+                            </label>
+
+                            <!-- Balanced Compression (Default) -->
+                            <label class="quality-option cursor-pointer group selected">
+                                <input type="radio" name="quality" value="50" class="sr-only quality-radio" checked>
+                                <div class="relative p-4 bg-white rounded-lg border border-blue-500 transition-all duration-200 hover:shadow-sm bg-blue-50">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="w-2 h-2 rounded-full bg-purple-500"></div>
+                                            <span class="font-semibold text-gray-900">Balanced</span>
+                                        </div>
+                                        <div class="quality-check">
+                                            <div class="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center">
+                                                <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                                </svg>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="text-sm text-gray-600 mb-2">Optimal balance for most users</p>
+                                    <div class="flex justify-between text-xs text-gray-500">
+                                        <span>Medium files</span>
+                                        <span>Balanced quality</span>
+                                    </div>
+                                </div>
+                            </label>
+
+                            <!-- High Compression -->
+                            <label class="quality-option cursor-pointer group">
+                                <input type="radio" name="quality" value="60" class="sr-only quality-radio">
+                                <div class="relative p-4 bg-white rounded-lg border border-gray-200 transition-all duration-200 hover:border-blue-300 hover:shadow-sm">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="w-2 h-2 rounded-full bg-orange-500"></div>
+                                            <span class="font-semibold text-gray-900">High</span>
+                                        </div>
+                                        <div class="quality-check hidden">
+                                            <div class="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center">
+                                                <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                                </svg>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="text-sm text-gray-600 mb-2">Significant size reduction</p>
+                                    <div class="flex justify-between text-xs text-gray-500">
+                                        <span>Small files</span>
+                                        <span>Moderate quality</span>
+                                    </div>
+                                </div>
+                            </label>
+
+                            <!-- Maximum Compression -->
+                            <label class="quality-option cursor-pointer group">
+                                <input type="radio" name="quality" value="70" class="sr-only quality-radio">
+                                <div class="relative p-4 bg-white rounded-lg border border-gray-200 transition-all duration-200 hover:border-blue-300 hover:shadow-sm">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="w-2 h-2 rounded-full bg-red-500"></div>
+                                            <span class="font-semibold text-gray-900">Maximum</span>
+                                        </div>
+                                        <div class="quality-check hidden">
+                                            <div class="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center">
+                                                <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                                </svg>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="text-sm text-gray-600 mb-2">Smallest possible file size</p>
+                                    <div class="flex justify-between text-xs text-gray-500">
+                                        <span>Smallest files</span>
+                                        <span>Basic quality</span>
+                                    </div>
+                                </div>
+                            </label>
+                        </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Upload Button -->
+                <div class="flex justify-center">
+                    <button type="submit" id="uploadButton" disabled
+                            class="flex items-center px-8 py-4 border border-transparent rounded-lg shadow-sm text-base font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all duration-200">
+                        <svg class="h-5 w-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                        </svg>
+                        Upload and Compress
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- File Analysis Panel (Hidden by default) -->
+    <div id="analysisPanel" class="hidden">
+        <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="px-4 py-5 sm:p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900">PDF Analysis Results</h3>
+                    <button id="closeAnalysis" class="text-gray-400 hover:text-gray-600">
+                        <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                
+                <div id="analysisContent" class="file-analysis">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <!-- File Overview -->
+                        <div class="analysis-card rounded-lg p-4 text-white">
+                            <h4 class="font-medium mb-3">File Overview</h4>
+                            <div id="fileOverview" class="space-y-2 text-sm">
+                                <!-- Content populated by JavaScript -->
+                            </div>
+                        </div>
+
+                        <!-- Optimization Opportunities -->
+                        <div class="optimization-card rounded-lg p-4 text-white">
+                            <h4 class="font-medium mb-3">Optimization Opportunities</h4>
+                            <div id="optimizationOpportunities" class="space-y-2 text-sm">
+                                <!-- Content populated by JavaScript -->
+                            </div>
+                        </div>
+
+                        <!-- Quality Impact Assessment -->
+                        <div class="bg-gray-100 rounded-lg p-4">
+                            <h4 class="font-medium mb-3 text-gray-900">Quality Impact</h4>
+                            <div id="qualityImpact" class="space-y-2 text-sm text-gray-700">
+                                <!-- Content populated by JavaScript -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Jobs with Enhanced Progress Indicators -->
+    <div id="activeJobs" class="hidden">
+        <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="px-4 py-5 sm:p-6">
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">
+                    Processing Status
+                </h3>
+                
+                <!-- Processing Stages -->
+                <div class="mb-6">
+                    <div class="flex items-center justify-center space-x-4">
+                        <div class="stage-indicator flex items-center px-3 py-1 rounded-full text-sm" id="stage-upload">
+                            <span class="w-2 h-2 bg-current rounded-full mr-2"></span>
+                            Upload
+                        </div>
+                        <div class="w-8 h-px bg-gray-300"></div>
+                        <div class="stage-indicator flex items-center px-3 py-1 rounded-full text-sm" id="stage-analyze">
+                            <span class="w-2 h-2 bg-current rounded-full mr-2"></span>
+                            Analyze
+                        </div>
+                        <div class="w-8 h-px bg-gray-300"></div>
+                        <div class="stage-indicator flex items-center px-3 py-1 rounded-full text-sm" id="stage-compress">
+                            <span class="w-2 h-2 bg-current rounded-full mr-2"></span>
+                            Compress
+                        </div>
+                        <div class="w-8 h-px bg-gray-300"></div>
+                        <div class="stage-indicator flex items-center px-3 py-1 rounded-full text-sm" id="stage-optimize">
+                            <span class="w-2 h-2 bg-current rounded-full mr-2"></span>
+                            Optimize
+                        </div>
+                        <div class="w-8 h-px bg-gray-300"></div>
+                        <div class="stage-indicator flex items-center px-3 py-1 rounded-full text-sm" id="stage-complete">
+                            <span class="w-2 h-2 bg-current rounded-full mr-2"></span>
+                            Complete
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="jobsList" class="space-y-4">
+                    <!-- Jobs will be populated here by JavaScript -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent History with Enhanced Display -->
+    <div class="bg-white overflow-hidden shadow rounded-lg">
+        <div class="px-4 py-5 sm:p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg leading-6 font-medium text-gray-900">
+                    Recent Files
+                </h3>
+                <div class="flex items-center space-x-4">
+                    <div class="text-sm text-gray-500">
+                        Total space saved: <span class="font-medium text-green-600" id="totalSpaceSaved">{{ "%.1f" | format(quota_info.session_usage.storage_mb * 0.65) }} MB</span>
+                    </div>
+                    <a href="{{ url_for('main.history') }}" 
+                       class="text-sm text-blue-600 hover:text-blue-500">
+                        View all →
+                    </a>
+                </div>
+            </div>
+            
+            {% if recent_jobs %}
+                <div class="flow-root">
+                    <ul role="list" class="-my-5 divide-y divide-gray-200">
+                        {% for job in recent_jobs %}
+                        <li class="py-5">
+                            <div class="flex items-center space-x-4">
+                                <div class="flex-shrink-0">
+                                    {% if job.status == 'completed' %}
+                                        <div class="h-8 w-8 rounded-full bg-green-100 flex items-center justify-center">
+                                            <svg class="h-4 w-4 text-green-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                                            </svg>
+                                        </div>
+                                    {% elif job.status == 'failed' %}
+                                        <div class="h-8 w-8 rounded-full bg-red-100 flex items-center justify-center">
+                                            <svg class="h-4 w-4 text-red-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                            </svg>
+                                        </div>
+                                    {% else %}
+                                        <div class="h-8 w-8 rounded-full bg-yellow-100 flex items-center justify-center">
+                                            <svg class="h-4 w-4 text-yellow-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd" />
+                                            </svg>
+                                        </div>
+                                    {% endif %}
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-sm font-medium text-gray-900 truncate">
+                                        {{ job.original_filename }}
+                                    </p>
+                                    <p class="text-sm text-gray-500">
+                                        {{ job.created_at.strftime('%Y-%m-%d %H:%M') }} •
+                                        {% if job.processed_size and job.original_size %}
+                                            {{ "%.1f" | format(job.original_size / 1024 / 1024) }}MB → 
+                                            {{ "%.1f" | format(job.processed_size / 1024 / 1024) }}MB
+                                            <span class="text-green-600 font-medium">({{ "%.0f" | format((1 - job.processed_size / job.original_size) * 100) }}% smaller)</span>
+                                        {% else %}
+                                            {{ "%.1f" | format(job.original_size / 1024 / 1024) }}MB
+                                        {% endif %}
+                                    </p>
+                                </div>
+                                <div class="flex-shrink-0">
+                                    {% if job.status == 'completed' and not job.is_expired %}
+                                        <a href="{{ url_for('main.download_file', job_id=job.id) }}"
+                                           class="inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                            Download
+                                        </a>
+                                    {% elif job.is_expired %}
+                                        <span class="inline-flex items-center px-2.5 py-1.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                                            Expired
+                                        </span>
+                                    {% else %}
+                                        <span class="inline-flex items-center px-2.5 py-1.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                            {{ job.status.title() }}
+                                        </span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% else %}
+                <div class="text-center py-12">
+                    <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                        <path vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                    </svg>
+                    <h3 class="mt-2 text-sm font-medium text-gray-900">No files processed yet</h3>
+                    <p class="mt-1 text-sm text-gray-500">Get started by uploading your first PDF file above.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Session Clear Modal (same as before) -->
+<div id="sessionModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden">
+    <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+        <div class="mt-3 text-center">
+            <h3 class="text-lg font-medium text-gray-900">Clear Session Files</h3>
+            <div class="mt-2 px-7 py-3">
+                <p class="text-sm text-gray-500">
+                    This will remove all files from your current session to free up space. 
+                    You will still be able to download completed files that haven't expired.
+                </p>
+            </div>
+            <div class="flex justify-center space-x-4 mt-4">
+                <button id="confirmClear" 
+                        class="px-4 py-2 bg-red-600 text-white text-base font-medium rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500">
+                    Clear Files
+                </button>
+                <button id="cancelClear" 
+                        class="px-4 py-2 bg-gray-300 text-gray-700 text-base font-medium rounded-md shadow-sm hover:bg-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-500">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/upload.js') }}"></script>
+<script src="{{ url_for('static', filename='js/progress.js') }}"></script>
+<script>
+// Simple dashboard functionality
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('Dashboard loading...');
+    
+    // Initialize components
+    if (typeof FileUploader !== 'undefined') {
+        window.fileUploader = new FileUploader();
+        console.log('FileUploader initialized');
+    }
+    
+    if (typeof ProgressTracker !== 'undefined') {
+        window.progressTracker = new ProgressTracker();
+        console.log('ProgressTracker initialized');
+    }
+    
+    // Initialize quality radio buttons
+    initializeQualitySelection();
+    
+    // Session management
+    setupSessionManagement();
+    
+    console.log('Dashboard initialized successfully');
+});
+
+// Modern quality selection functionality
+function initializeQualitySelection() {
+    const qualityRadios = document.querySelectorAll('input[name="quality"]');
+    const fileInput = document.getElementById('fileInput');
+    const uploadButton = document.getElementById('uploadButton');
+    
+    if (!qualityRadios.length) return;
+    
+    function updateSelection(selectedValue) {
+        // Save to session storage
+        sessionStorage.setItem('compressionLevel', selectedValue);
+        
+        // Update all quality options
+        document.querySelectorAll('.quality-option').forEach(option => {
+            const radio = option.querySelector('input[name="quality"]');
+            const card = option.querySelector('div');
+            const checkIcon = option.querySelector('.quality-check');
+            
+            if (radio && radio.value === selectedValue) {
+                option.classList.add('selected');
+                card.style.borderColor = '#3b82f6';
+                card.style.backgroundColor = '#eff6ff';
+                if (checkIcon) checkIcon.style.display = 'block';
+            } else {
+                option.classList.remove('selected');
+                card.style.borderColor = '#e5e7eb';
+                card.style.backgroundColor = 'white';
+                if (checkIcon) checkIcon.style.display = 'none';
+            }
+        });
+    }
+    
+    function checkFormReady() {
+        // Enable upload button if file is selected
+        if (fileInput && fileInput.files && fileInput.files.length > 0) {
+            uploadButton.disabled = false;
+        } else {
+            uploadButton.disabled = true;
+        }
+    }
+    
+    function loadSavedCompression() {
+        // Load saved compression level from session storage
+        const savedLevel = sessionStorage.getItem('compressionLevel');
+        
+        if (savedLevel) {
+            const savedRadio = document.querySelector(`input[name="quality"][value="${savedLevel}"]`);
+            if (savedRadio) {
+                savedRadio.checked = true;
+                updateSelection(savedLevel);
+                
+                // Show a subtle indication that preference was restored
+                const qualitySettings = document.getElementById('qualitySettings');
+                if (qualitySettings) {
+                    const indicator = document.createElement('div');
+                    indicator.className = 'text-xs text-green-600 mt-1 opacity-75';
+                    indicator.innerHTML = '✓ Your last compression preference restored';
+                    qualitySettings.appendChild(indicator);
+                    
+                    // Remove the indicator after 3 seconds
+                    setTimeout(() => {
+                        if (indicator && indicator.parentNode) {
+                            indicator.parentNode.removeChild(indicator);
+                        }
+                    }, 3000);
+                }
+                return;
+            }
+        }
+        
+        // Fallback to default (50% - Balanced) if no saved preference
+        const defaultRadio = document.querySelector('input[name="quality"][value="50"]');
+        if (defaultRadio) {
+            defaultRadio.checked = true;
+            updateSelection('50');
+        }
+    }
+    
+    // Set up radio button listeners
+    qualityRadios.forEach(radio => {
+        radio.addEventListener('change', function() {
+            if (this.checked) {
+                updateSelection(this.value);
+            }
+        });
+        
+        // Also listen for clicks on the label
+        const label = radio.closest('label');
+        if (label) {
+            label.addEventListener('click', function() {
+                radio.checked = true;
+                updateSelection(radio.value);
+            });
+        }
+    });
+    
+    // Load saved compression level or use default
+    loadSavedCompression();
+    
+    // Enable upload button when file is selected
+    if (fileInput) {
+        fileInput.addEventListener('change', checkFormReady);
+    }
+    
+    // Also check when files are dropped (this will be called by FileUploader)
+    window.checkFormReady = checkFormReady;
+    checkFormReady();
+}
+
+function setupSessionManagement() {
+    const cancelBtn = document.getElementById('cancelClear');
+    const confirmBtn = document.getElementById('confirmClear');
+    
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', function() {
+            document.getElementById('sessionModal').classList.add('hidden');
+        });
+    }
+    
+    if (confirmBtn) {
+        confirmBtn.addEventListener('click', function() {
+            fetch('/api/user/clear-session', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name=csrf-token]').getAttribute('content')
+                }
+            }).then(response => response.json())
+              .then(data => {
+                  if (data.success) {
+                      location.reload();
+                  } else {
+                      alert('Error: ' + data.message);
+                  }
+              });
+        });
+    }
+}
+
+function clearSession() {
+    document.getElementById('sessionModal').classList.remove('hidden');
+}
+
+// Enhanced utility functions for the dashboard
+function updateDashboardStats() {
+    // Update compression statistics dynamically
+    fetch('/api/user/stats')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('avgCompression').textContent = Math.round(data.avg_compression * 100) + '%';
+                document.getElementById('totalSaved').textContent = (data.total_saved / 1024 / 1024).toFixed(1);
+                document.getElementById('totalSpaceSaved').textContent = (data.total_saved / 1024 / 1024).toFixed(1) + ' MB';
+            }
+        })
+        .catch(error => console.log('Stats update failed:', error));
+}
+
+// Update stats periodically
+setInterval(updateDashboardStats, 30000); // Every 30 seconds
+</script>
+{% endblock %}

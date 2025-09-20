@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  pdf-compressor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - FLASK_ENV=development
+      - SECRET_KEY=dev-secret-key-change-in-production
+      - DATABASE_URL=sqlite:///app.db
+      - MAX_CONTENT_LENGTH=26214400
+      - UPLOAD_FOLDER=/app/storage
+      - RATE_LIMITS_ENABLED=true
+      - DAILY_FILE_LIMIT=50
+      - DAILY_STORAGE_LIMIT_MB=200
+      - SESSION_STORAGE_LIMIT_MB=100
+      - CSRF_ENABLED=true
+      - SECURE_COOKIES=false
+      - GHOSTSCRIPT_PATH=/usr/bin/gs
+      - PROCESSING_TIMEOUT=300
+      - CLEANUP_ENABLED=true
+      - FILE_RETENTION_HOURS=24
+    volumes:
+      - ./instance:/app/instance
+      - ./storage:/app/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    
+  # Optional: Redis for session storage (for production scaling)
+  # redis:
+  #   image: redis:7-alpine
+  #   ports:
+  #     - "6379:6379"
+  #   command: redis-server --appendonly yes
+  #   volumes:
+  #     - redis_data:/data
+  #   restart: unless-stopped
+
+# volumes:
+#   redis_data:

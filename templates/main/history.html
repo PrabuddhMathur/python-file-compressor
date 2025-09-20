@@ -1,0 +1,542 @@
+{% extends "base.html" %}
+
+{% block title %}Processing History - PDF Compressor{% endblock %}
+
+{% block extra_head %}
+<style>
+    .history-card {
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        border: 1px solid rgba(0, 0, 0, 0.05);
+    }
+    .history-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    }
+    .file-icon {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    }
+    .status-badge {
+        transition: all 0.3s ease;
+        font-weight: 500;
+        font-size: 0.75rem;
+        padding: 0.375rem 0.75rem;
+        border-radius: 9999px;
+    }
+    .status-completed {
+        background: linear-gradient(135deg, #d1fae5, #a7f3d0);
+        color: #065f46;
+        border: 1px solid #10b981;
+    }
+    .status-failed {
+        background: linear-gradient(135deg, #fee2e2, #fecaca);
+        color: #991b1b;
+        border: 1px solid #ef4444;
+    }
+    .status-processing {
+        background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+        color: #1e40af;
+        border: 1px solid #3b82f6;
+        animation: pulse 2s infinite;
+    }
+    .status-pending {
+        background: linear-gradient(135deg, #fef3c7, #fde68a);
+        color: #92400e;
+        border: 1px solid #f59e0b;
+    }
+    .compression-indicator {
+        background: linear-gradient(90deg, #10b981, #059669);
+        border-radius: 9999px;
+        height: 4px;
+        transition: width 0.5s ease;
+    }
+    .stats-summary {
+        background: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
+        border: 1px solid rgba(0, 0, 0, 0.05);
+    }
+    .filter-button {
+        transition: all 0.3s ease;
+        border-radius: 0.5rem;
+        padding: 0.5rem 1rem;
+        font-weight: 500;
+        border: 2px solid transparent;
+    }
+    .filter-button.active {
+        background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+        color: white;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    .filter-button:not(.active) {
+        background: white;
+        color: #6b7280;
+        border-color: #e5e7eb;
+    }
+    .filter-button:not(.active):hover {
+        border-color: #3b82f6;
+        color: #3b82f6;
+    }
+    .search-input {
+        background: linear-gradient(145deg, #ffffff 0%, #f9fafb 100%);
+        border: 2px solid #e5e7eb;
+        border-radius: 0.75rem;
+        transition: all 0.3s ease;
+    }
+    .search-input:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        background: white;
+    }
+    .empty-state {
+        background: linear-gradient(145deg, #f8fafc 0%, #f1f5f9 100%);
+        border: 2px dashed #cbd5e0;
+        border-radius: 1rem;
+    }
+    .pagination-button {
+        transition: all 0.3s ease;
+        border-radius: 0.5rem;
+    }
+    .pagination-button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    .pagination-button.active {
+        background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+        color: white;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <!-- Header with Enhanced Statistics -->
+    <div class="stats-summary shadow rounded-xl p-6">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-900">Processing History</h1>
+                <p class="mt-2 text-gray-600">Track your PDF compression results and download processed files.</p>
+            </div>
+            
+            <!-- Quick Stats -->
+            <div class="mt-6 lg:mt-0 grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-blue-600">{{ jobs.total or 0 }}</div>
+                    <div class="text-sm text-gray-500">Total Files</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-green-600">
+                        {% set completed_count = jobs.items | selectattr('status', 'equalto', 'completed') | list | length %}
+                        {{ completed_count }}
+                    </div>
+                    <div class="text-sm text-gray-500">Completed</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-orange-600">
+                        {% set total_saved = jobs.items | selectattr('original_size') | selectattr('processed_size') | map(attribute='original_size') | sum - jobs.items | selectattr('original_size') | selectattr('processed_size') | map(attribute='processed_size') | sum %}
+                        {{ "%.1f" | format((total_saved or 0) / 1024 / 1024) }}MB
+                    </div>
+                    <div class="text-sm text-gray-500">Space Saved</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-purple-600">
+                        {% if total_saved > 0 %}
+                            {% set original_total = jobs.items | selectattr('original_size') | map(attribute='original_size') | sum %}
+                            {{ "%.0f" | format((total_saved / original_total * 100) if original_total > 0 else 0) }}%
+                        {% else %}
+                            0%
+                        {% endif %}
+                    </div>
+                    <div class="text-sm text-gray-500">Avg. Reduction</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Enhanced Filters and Search -->
+    <div class="bg-white shadow rounded-xl p-6">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
+            <!-- Status Filters -->
+            <div class="flex flex-wrap gap-2">
+                <button class="filter-button active" data-filter="all">
+                    All Files
+                </button>
+                <button class="filter-button" data-filter="completed">
+                    <svg class="w-4 h-4 inline mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Completed
+                </button>
+                <button class="filter-button" data-filter="processing">
+                    <svg class="w-4 h-4 inline mr-1 animate-spin" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/>
+                    </svg>
+                    Processing
+                </button>
+                <button class="filter-button" data-filter="failed">
+                    <svg class="w-4 h-4 inline mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                    Failed
+                </button>
+            </div>
+
+            <!-- Search -->
+            <div class="relative lg:w-80">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                    </svg>
+                </div>
+                <input type="text" id="searchInput" class="search-input block w-full pl-10 pr-3 py-2 text-sm placeholder-gray-500 focus:outline-none" placeholder="Search files...">
+            </div>
+        </div>
+    </div>
+
+    <!-- Files List -->
+    <div class="bg-white shadow rounded-xl overflow-hidden">
+        {% if jobs.items %}
+            <div class="divide-y divide-gray-200">
+                {% for job in jobs.items %}
+                <div class="history-card p-6 file-item" data-status="{{ job.status }}" data-filename="{{ job.original_filename.lower() }}">
+                    <div class="flex items-center space-x-4">
+                        <!-- File Icon -->
+                        <div class="flex-shrink-0">
+                            <div class="file-icon w-12 h-12 rounded-lg flex items-center justify-center shadow-lg">
+                                <svg class="h-6 w-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                        </div>
+
+                        <!-- File Details -->
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-lg font-semibold text-gray-900 truncate">
+                                    {{ job.original_filename }}
+                                </h3>
+                                <div class="flex items-center space-x-2">
+                                    <!-- Status Badge -->
+                                    <span class="status-badge status-{{ job.status }}">
+                                        {% if job.status == 'completed' %}
+                                            <svg class="w-3 h-3 inline mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                            </svg>
+                                            Completed
+                                        {% elif job.status == 'failed' %}
+                                            <svg class="w-3 h-3 inline mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                                            </svg>
+                                            Failed
+                                        {% elif job.status == 'processing' %}
+                                            <svg class="w-3 h-3 inline mr-1 animate-spin" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/>
+                                            </svg>
+                                            Processing
+                                        {% else %}
+                                            <svg class="w-3 h-3 inline mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
+                                            </svg>
+                                            {{ job.status.title() }}
+                                        {% endif %}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="mt-2 flex items-center justify-between">
+                                <div class="flex items-center space-x-4 text-sm text-gray-500">
+                                    <span class="flex items-center">
+                                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3a2 2 0 012-2h4a2 2 0 012 2v4M8 7v2a2 2 0 002 2h4a2 2 0 002-2V7M8 7H6a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V9a2 2 0 00-2-2h-2"/>
+                                        </svg>
+                                        {{ job.created_at.strftime('%Y-%m-%d %H:%M') }}
+                                    </span>
+                                    <span class="flex items-center">
+                                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2m-9 4v10a2 2 0 002 2h6a2 2 0 002-2V8M7 8h10"/>
+                                        </svg>
+                                        Quality: {{ job.quality_preset|title }}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <!-- Size Comparison and Compression Visual -->
+                            {% if job.processed_size and job.original_size %}
+                            <div class="mt-4 space-y-2">
+                                <div class="flex items-center justify-between text-sm">
+                                    <span class="text-gray-600">
+                                        <span class="font-medium">{{ "%.1f" | format(job.original_size / 1024 / 1024) }}MB</span>
+                                        →
+                                        <span class="font-medium text-green-600">{{ "%.1f" | format(job.processed_size / 1024 / 1024) }}MB</span>
+                                    </span>
+                                    <span class="font-bold text-green-600">
+                                        {{ "%.0f" | format((1 - job.processed_size / job.original_size) * 100) }}% smaller
+                                    </span>
+                                </div>
+                                
+                                <!-- Compression Visual -->
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    {% set compression_percent = ((1 - job.processed_size / job.original_size) * 100) | round | int %}
+                                    <div class="compression-indicator h-2"
+                                         style="width: {{ compression_percent }}%">
+                                    </div>
+                                </div>
+                            </div>
+                            {% else %}
+                            <div class="mt-4">
+                                <div class="text-sm text-gray-600">
+                                    Original size: <span class="font-medium">{{ "%.1f" | format(job.original_size / 1024 / 1024) }}MB</span>
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            <!-- Error Message -->
+                            {% if job.error_message %}
+                            <div class="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                                <p class="text-sm text-red-700 flex items-center">
+                                    <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                                    </svg>
+                                    <strong>Error:</strong> {{ job.error_message }}
+                                </p>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div class="flex-shrink-0 flex items-center space-x-2">
+                            {% if job.status == 'completed' and not job.is_expired %}
+                                <a href="{{ url_for('main.download_file', job_id=job.id) }}"
+                                   class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all duration-300 shadow-md hover:shadow-lg">
+                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-4-4m4 4l4-4m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                    </svg>
+                                    Download
+                                </a>
+                            {% elif job.is_expired %}
+                                <span class="inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-600">
+                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                    </svg>
+                                    Expired
+                                </span>
+                            {% elif job.status == 'processing' %}
+                                <button class="inline-flex items-center px-4 py-2 border border-blue-300 text-sm font-medium rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-300"
+                                        onclick="refreshJobStatus('{{ job.id }}')">
+                                    <svg class="w-4 h-4 mr-2 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                    </svg>
+                                    Refresh
+                                </button>
+                            {% else %}
+                                <span class="inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium bg-yellow-100 text-yellow-800">
+                                    {{ job.status.title() }}
+                                </span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- Enhanced Pagination -->
+            {% if jobs.pages > 1 %}
+            <div class="bg-gray-50 px-6 py-4 border-t border-gray-200">
+                <div class="flex items-center justify-between">
+                    <div class="flex-1 flex justify-between sm:hidden">
+                        {% if jobs.has_prev %}
+                            <a href="{{ url_for('main.history', page=jobs.prev_num) }}" 
+                               class="pagination-button relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50">
+                                Previous
+                            </a>
+                        {% endif %}
+                        {% if jobs.has_next %}
+                            <a href="{{ url_for('main.history', page=jobs.next_num) }}" 
+                               class="pagination-button ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50">
+                                Next
+                            </a>
+                        {% endif %}
+                    </div>
+                    <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                        <div>
+                            <p class="text-sm text-gray-700">
+                                Showing
+                                <span class="font-medium">{{ jobs.per_page * (jobs.page - 1) + 1 }}</span>
+                                to
+                                <span class="font-medium">{{ jobs.per_page * jobs.page if jobs.page < jobs.pages else jobs.total }}</span>
+                                of
+                                <span class="font-medium">{{ jobs.total }}</span>
+                                results
+                            </p>
+                        </div>
+                        <div>
+                            <nav class="relative z-0 inline-flex rounded-lg shadow-sm -space-x-px" aria-label="Pagination">
+                                <!-- Previous Button -->
+                                {% if jobs.has_prev %}
+                                    <a href="{{ url_for('main.history', page=jobs.prev_num) }}" 
+                                       class="pagination-button relative inline-flex items-center px-2 py-2 rounded-l-lg border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                                        <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                        </svg>
+                                    </a>
+                                {% endif %}
+
+                                <!-- Page Numbers -->
+                                {% for page_num in jobs.iter_pages() %}
+                                    {% if page_num %}
+                                        {% if page_num != jobs.page %}
+                                            <a href="{{ url_for('main.history', page=page_num) }}" 
+                                               class="pagination-button relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                                                {{ page_num }}
+                                            </a>
+                                        {% else %}
+                                            <span class="pagination-button active relative inline-flex items-center px-4 py-2 border text-sm font-medium">
+                                                {{ page_num }}
+                                            </span>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                                            ...
+                                        </span>
+                                    {% endif %}
+                                {% endfor %}
+
+                                <!-- Next Button -->
+                                {% if jobs.has_next %}
+                                    <a href="{{ url_for('main.history', page=jobs.next_num) }}" 
+                                       class="pagination-button relative inline-flex items-center px-2 py-2 rounded-r-lg border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                                        <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                                        </svg>
+                                    </a>
+                                {% endif %}
+                            </nav>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+        {% else %}
+            <!-- Enhanced Empty State -->
+            <div class="empty-state text-center py-16 mx-6 my-6">
+                <div class="animate-bounce">
+                    <svg class="mx-auto h-16 w-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                </div>
+                <h3 class="mt-6 text-xl font-medium text-gray-900">No processing history yet</h3>
+                <p class="mt-2 text-gray-500 max-w-md mx-auto">
+                    Start compressing your PDF files to see them appear here. Your processing history will show compression results, download links, and file statistics.
+                </p>
+                <div class="mt-8">
+                    <a href="{{ url_for('main.dashboard') }}" 
+                       class="inline-flex items-center px-6 py-3 border border-transparent shadow-sm text-base font-medium rounded-lg text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-300">
+                        <svg class="-ml-1 mr-3 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                        </svg>
+                        Compress Your First PDF
+                    </a>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Filter functionality
+    const filterButtons = document.querySelectorAll('.filter-button');
+    const fileItems = document.querySelectorAll('.file-item');
+    const searchInput = document.getElementById('searchInput');
+    
+    // Filter by status
+    filterButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            // Update active button
+            filterButtons.forEach(btn => btn.classList.remove('active'));
+            this.classList.add('active');
+            
+            const filter = this.dataset.filter;
+            
+            fileItems.forEach(item => {
+                const status = item.dataset.status;
+                const matchesFilter = filter === 'all' || status === filter;
+                const matchesSearch = searchInput.value === '' || 
+                    item.dataset.filename.includes(searchInput.value.toLowerCase());
+                
+                if (matchesFilter && matchesSearch) {
+                    item.style.display = 'block';
+                    item.classList.add('animate-fadeIn');
+                } else {
+                    item.style.display = 'none';
+                    item.classList.remove('animate-fadeIn');
+                }
+            });
+        });
+    });
+    
+    // Search functionality
+    searchInput.addEventListener('input', function() {
+        const searchTerm = this.value.toLowerCase();
+        const activeFilter = document.querySelector('.filter-button.active').dataset.filter;
+        
+        fileItems.forEach(item => {
+            const filename = item.dataset.filename;
+            const status = item.dataset.status;
+            const matchesSearch = searchTerm === '' || filename.includes(searchTerm);
+            const matchesFilter = activeFilter === 'all' || status === activeFilter;
+            
+            if (matchesSearch && matchesFilter) {
+                item.style.display = 'block';
+                item.classList.add('animate-fadeIn');
+            } else {
+                item.style.display = 'none';
+                item.classList.remove('animate-fadeIn');
+            }
+        });
+    });
+    
+    // Auto-refresh processing jobs
+    const processingItems = document.querySelectorAll('[data-status="processing"]');
+    if (processingItems.length > 0) {
+        // Refresh every 5 seconds if there are processing jobs
+        setInterval(() => {
+            location.reload();
+        }, 5000);
+    }
+});
+
+// Refresh individual job status
+async function refreshJobStatus(jobId) {
+    try {
+        const response = await fetch(`/api/process/status/${jobId}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            // Reload page to show updated status
+            location.reload();
+        } else {
+            console.error('Failed to refresh job status:', data.message);
+        }
+    } catch (error) {
+        console.error('Error refreshing job status:', error);
+    }
+}
+
+// Add smooth scrolling for pagination
+document.querySelectorAll('.pagination-button').forEach(button => {
+    button.addEventListener('click', function(e) {
+        // Add loading state
+        const originalText = this.textContent;
+        this.textContent = 'Loading...';
+        this.classList.add('opacity-50');
+        
+        // Let the navigation proceed normally
+        setTimeout(() => {
+            this.textContent = originalText;
+            this.classList.remove('opacity-50');
+        }, 1000);
+    });
+});
+</script>
+{% endblock %}
