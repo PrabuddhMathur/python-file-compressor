@@ -78,7 +78,7 @@ def init_extensions(app):
     # Add CSRF token to template context (disabled for now)
     @app.context_processor
     def inject_csrf_token():
-        return dict(csrf_token=lambda: "disabled")
+        return dict(csrf_token=lambda: "")
     
     # Initialize login manager
     login_manager = LoginManager()
@@ -102,6 +102,40 @@ def init_extensions(app):
             'success': False,
             'message': 'Please log in to access this page'
         }), 401
+    
+    # Handle session cleanup for expired/invalid sessions
+    from flask import session
+    from flask_login import current_user
+    
+    @app.before_request
+    def cleanup_expired_sessions():
+        """Clean up user data when session expires or becomes invalid."""
+        # Skip for static files and auth routes to avoid recursion
+        if (request.endpoint and 
+            (request.endpoint.startswith('static') or 
+             request.endpoint.startswith('auth.login') or
+             request.endpoint.startswith('auth.register'))):
+            return
+            
+        # Check if we have a user ID in session but no valid current_user
+        # This happens when session expires but Flask-Login hasn't fully cleared it yet
+        if '_user_id' in session and not current_user.is_authenticated:
+            try:
+                user_id = session.get('_user_id')
+                if user_id:
+                    # Clean up all user data using the initialized file manager
+                    cleanup_result = file_manager.delete_all_user_data(
+                        user_id=int(user_id),
+                        ip_address=request.remote_addr or 'session_cleanup'
+                    )
+                    app.logger.info(f"Session cleanup for expired user {user_id}: {cleanup_result}")
+                    
+                # Clear the session completely
+                session.clear()
+                
+            except Exception as e:
+                app.logger.error(f"Error during session cleanup: {e}")
+                session.clear()
 
 def register_blueprints(app):
     """Register application blueprints."""

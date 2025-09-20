@@ -281,6 +281,17 @@ def logout():
     if current_user.is_authenticated:
         user_id = current_user.id
         
+        # Import the initialized file manager from services
+        from services.file_manager import file_manager
+        
+        # Delete ALL user data (files and database records)
+        cleanup_result = file_manager.delete_all_user_data(
+            user_id=user_id,
+            ip_address=request.remote_addr
+        )
+        
+        current_app.logger.info(f"User {user_id} logout cleanup: {cleanup_result}")
+        
         # Log logout
         AuditLog.log_logout(
             user_id=user_id,
@@ -297,7 +308,8 @@ def logout():
         else:
             return jsonify({
                 'success': True,
-                'message': 'Logout successful'
+                'message': 'Logout successful',
+                'cleanup': cleanup_result
             }), 200
     else:
         if request.method == 'GET' or 'text/html' in request.headers.get('Accept', ''):

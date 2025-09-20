@@ -38,7 +38,7 @@ const Utils = {
     // Show notification
     showNotification: function(message, type = 'info', duration = 10000) {
         const notification = document.createElement('div');
-        notification.className = `fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 ${this.getNotificationClasses(type)} transform translate-x-0 transition-all duration-300 ease-in-out`;
+        notification.className = `fixed top-20 right-4 p-4 rounded-lg shadow-lg z-50 ${this.getNotificationClasses(type)} transform translate-x-0 transition-all duration-300 ease-in-out`;
         
         // Add icon based on type
         const icon = this.getNotificationIcon(type);

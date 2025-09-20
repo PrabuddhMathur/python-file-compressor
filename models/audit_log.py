@@ -173,6 +173,18 @@ class AuditLog(db.Model):
         )
     
     @staticmethod
+    def log_user_cleanup(user_id, ip_address, user_agent=None, files_deleted=None, jobs_deleted=None):
+        """Log complete user data cleanup."""
+        return AuditLog.log_action(
+            user_id=user_id,
+            action='user_cleanup',
+            ip_address=ip_address,
+            user_agent=user_agent,
+            files_deleted=files_deleted,
+            jobs_deleted=jobs_deleted
+        )
+    
+    @staticmethod
     def log_rate_limit_exceeded(user_id, ip_address, limit_type, user_agent=None):
         """Log rate limit exceeded."""
         return AuditLog.log_action(

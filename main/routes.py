@@ -15,8 +15,10 @@ logger = logging.getLogger(__name__)
 
 @main.route('/')
 def index():
-    """Home page."""
-    return render_template('main/index.html')
+    """Home page - redirect logged-in users to dashboard."""
+    if current_user.is_authenticated:
+        return redirect(url_for('main.dashboard'))
+    return redirect(url_for('auth.login'))
 
 
 @main.route('/dashboard')
@@ -141,6 +143,98 @@ def download_file(job_id):
         logger.error(f"Download error for job {job_id}, user {current_user.id}: {e}")
         flash('Error downloading file.', 'error')
         return redirect(url_for('main.dashboard'))
+
+
+@main.route('/download-batch', methods=['POST'])
+@login_required
+def download_batch():
+    """Download multiple files as a ZIP archive."""
+    import io
+    import zipfile
+    import os
+    from flask import send_file
+    
+    try:
+        data = request.get_json()
+        job_ids = data.get('job_ids', [])
+        
+        if not job_ids:
+            return jsonify({'success': False, 'message': 'No files selected for download.'}), 400
+        
+        if len(job_ids) > 50:  # Reasonable limit
+            return jsonify({'success': False, 'message': 'Too many files selected. Maximum 50 files allowed per batch.'}), 400
+        
+        # Validate all jobs belong to current user and are downloadable
+        jobs = ProcessingJob.query.filter(
+            ProcessingJob.id.in_(job_ids),
+            ProcessingJob.user_id == current_user.id,
+            ProcessingJob.status == 'completed'
+        ).all()
+        
+        if len(jobs) != len(job_ids):
+            return jsonify({'success': False, 'message': 'Some files are not available for download or do not belong to you.'}), 403
+        
+        # Check for expired files
+        expired_jobs = [job for job in jobs if job.is_expired]
+        if expired_jobs:
+            expired_names = [job.original_filename for job in expired_jobs]
+            return jsonify({
+                'success': False, 
+                'message': f'Some files have expired: {", ".join(expired_names[:3])}{"..." if len(expired_names) > 3 else ""}'
+            }), 410
+        
+        # Create ZIP file in memory
+        zip_buffer = io.BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for job in jobs:
+                # Get file path
+                file_path = file_manager.get_file_download_path(job)
+                if not file_path or not os.path.exists(file_path):
+                    logger.warning(f"File not found for job {job.id}: {file_path}")
+                    continue
+                
+                # Generate filename for ZIP
+                original_name, ext = os.path.splitext(job.original_filename)
+                zip_filename = f"{original_name}_compressed_{job.quality_preset}{ext}"
+                
+                # Handle duplicate filenames by adding a number
+                counter = 1
+                base_zip_filename = zip_filename
+                while zip_filename in [info.filename for info in zip_file.infolist()]:
+                    name, ext = os.path.splitext(base_zip_filename)
+                    zip_filename = f"{name}_{counter}{ext}"
+                    counter += 1
+                
+                # Add file to ZIP
+                zip_file.write(file_path, zip_filename)
+        
+        zip_buffer.seek(0)
+        
+        # Log batch download
+        for job in jobs:
+            AuditLog.log_file_download(
+                user_id=current_user.id,
+                job_id=job.id,
+                ip_address=request.remote_addr,
+                user_agent=request.headers.get('User-Agent')
+            )
+        
+        # Generate download filename with timestamp
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        zip_filename = f"compressed_files_{timestamp}.zip"
+        
+        return send_file(
+            io.BytesIO(zip_buffer.read()),
+            as_attachment=True,
+            download_name=zip_filename,
+            mimetype='application/zip'
+        )
+        
+    except Exception as e:
+        logger.error(f"Batch download error for user {current_user.id}: {e}")
+        return jsonify({'success': False, 'message': 'Error creating download archive. Please try again.'}), 500
 
 
 @main.route('/about')

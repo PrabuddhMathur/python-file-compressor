@@ -133,19 +133,49 @@ class FileManager:
         files_deleted = 0
         
         try:
+            current_app.logger.info(f"Deleting files for job {job.id} - upload_path: {job.upload_path}, processed_path: {job.processed_path}")
+            
             # Delete upload file
             if job.upload_path:
-                upload_path = os.path.join(self.upload_folder, job.upload_path)
-                if os.path.exists(upload_path):
-                    SecurityUtils.secure_delete_file(upload_path)
-                    files_deleted += 1
+                # Try different path constructions to handle various path formats
+                upload_paths_to_try = [
+                    os.path.join(self.upload_folder, job.upload_path),
+                    job.upload_path,  # Try as absolute path
+                    os.path.abspath(job.upload_path) if not os.path.isabs(job.upload_path) else job.upload_path
+                ]
+                
+                for upload_path in upload_paths_to_try:
+                    current_app.logger.debug(f"Trying upload path: {upload_path}")
+                    if os.path.exists(upload_path):
+                        if SecurityUtils.secure_delete_file(upload_path):
+                            current_app.logger.info(f"Successfully deleted upload file: {upload_path}")
+                            files_deleted += 1
+                            break
+                        else:
+                            current_app.logger.warning(f"Failed to delete upload file: {upload_path}")
+                    else:
+                        current_app.logger.debug(f"Upload path does not exist: {upload_path}")
             
             # Delete processed file
             if job.processed_path:
-                processed_path = os.path.join(self.upload_folder, job.processed_path)
-                if os.path.exists(processed_path):
-                    SecurityUtils.secure_delete_file(processed_path)
-                    files_deleted += 1
+                # Try different path constructions
+                processed_paths_to_try = [
+                    os.path.join(self.upload_folder, job.processed_path),
+                    job.processed_path,  # Try as absolute path
+                    os.path.abspath(job.processed_path) if not os.path.isabs(job.processed_path) else job.processed_path
+                ]
+                
+                for processed_path in processed_paths_to_try:
+                    current_app.logger.debug(f"Trying processed path: {processed_path}")
+                    if os.path.exists(processed_path):
+                        if SecurityUtils.secure_delete_file(processed_path):
+                            current_app.logger.info(f"Successfully deleted processed file: {processed_path}")
+                            files_deleted += 1
+                            break
+                        else:
+                            current_app.logger.warning(f"Failed to delete processed file: {processed_path}")
+                    else:
+                        current_app.logger.debug(f"Processed path does not exist: {processed_path}")
             
             # Clean up temp directory
             self.cleanup_temp_directory(job.id)
@@ -189,6 +219,70 @@ class FileManager:
         except Exception as e:
             current_app.logger.error(f"Failed to clear session files for user {user_id}: {e}")
             return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def delete_all_user_data(self, user_id, ip_address='system'):
+        """Completely delete all user data including files and database records."""
+        try:
+            files_deleted = 0
+            jobs_deleted = 0
+            
+            # Get ALL jobs for the user (including expired ones)
+            all_user_jobs = ProcessingJob.query.filter_by(user_id=user_id).all()
+            
+            current_app.logger.info(f"Found {len(all_user_jobs)} total jobs for user {user_id}")
+            
+            for job in all_user_jobs:
+                # Delete files first
+                files_deleted += self.delete_job_files(job)
+                jobs_deleted += 1
+            
+            # Delete all job records from database
+            ProcessingJob.query.filter_by(user_id=user_id).delete()
+            
+            # Delete user directory structure completely
+            user_upload_dir = os.path.join(self.upload_folder, 'uploads', str(user_id))
+            user_processed_dir = os.path.join(self.upload_folder, 'processed', str(user_id))
+            
+            if os.path.exists(user_upload_dir):
+                shutil.rmtree(user_upload_dir, ignore_errors=True)
+                current_app.logger.info(f"Deleted user upload directory: {user_upload_dir}")
+            
+            if os.path.exists(user_processed_dir):
+                shutil.rmtree(user_processed_dir, ignore_errors=True)
+                current_app.logger.info(f"Deleted user processed directory: {user_processed_dir}")
+            
+            # Reset user storage counters
+            user = User.query.get(user_id)
+            if user:
+                user.clear_session_storage()
+                user.storage_used = 0  # Reset total storage used
+                db.session.commit()
+            
+            # Log complete cleanup
+            AuditLog.log_user_cleanup(
+                user_id=user_id,
+                ip_address=ip_address,
+                files_deleted=files_deleted,
+                jobs_deleted=jobs_deleted
+            )
+            
+            current_app.logger.info(f"Complete user cleanup for user {user_id}: {files_deleted} files, {jobs_deleted} jobs deleted")
+            
+            return {
+                'files_deleted': files_deleted,
+                'jobs_deleted': jobs_deleted,
+                'success': True
+            }
+            
+        except Exception as e:
+            current_app.logger.error(f"Failed to delete all user data for user {user_id}: {e}")
+            db.session.rollback()
+            return {
+                'files_deleted': 0,
+                'jobs_deleted': 0,
                 'success': False,
                 'error': str(e)
             }

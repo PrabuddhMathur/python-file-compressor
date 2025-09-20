@@ -325,7 +325,7 @@
                 </div>
 
                 <!-- Upload Button -->
-                <div class="flex justify-center">
+                <div class="flex justify-center mt-8 mb-6">
                     <button type="submit" id="uploadButton" disabled
                             class="flex items-center px-8 py-4 border border-transparent rounded-lg shadow-sm text-base font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all duration-200">
                         <svg class="h-5 w-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -424,96 +424,6 @@
                     <!-- Jobs will be populated here by JavaScript -->
                 </div>
             </div>
-        </div>
-    </div>
-
-    <!-- Recent History with Enhanced Display -->
-    <div class="bg-white overflow-hidden shadow rounded-lg">
-        <div class="px-4 py-5 sm:p-6">
-            <div class="flex items-center justify-between mb-4">
-                <h3 class="text-lg leading-6 font-medium text-gray-900">
-                    Recent Files
-                </h3>
-                <div class="flex items-center space-x-4">
-                    <a href="{{ url_for('main.history') }}" 
-                       class="text-sm text-blue-600 hover:text-blue-500">
-                        View all →
-                    </a>
-                </div>
-            </div>
-            
-            {% if recent_jobs %}
-                <div class="flow-root">
-                    <ul role="list" class="-my-5 divide-y divide-gray-200">
-                        {% for job in recent_jobs %}
-                        <li class="py-5">
-                            <div class="flex items-center space-x-4">
-                                <div class="flex-shrink-0">
-                                    {% if job.status == 'completed' %}
-                                        <div class="h-8 w-8 rounded-full bg-green-100 flex items-center justify-center">
-                                            <svg class="h-4 w-4 text-green-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-                                            </svg>
-                                        </div>
-                                    {% elif job.status == 'failed' %}
-                                        <div class="h-8 w-8 rounded-full bg-red-100 flex items-center justify-center">
-                                            <svg class="h-4 w-4 text-red-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
-                                            </svg>
-                                        </div>
-                                    {% else %}
-                                        <div class="h-8 w-8 rounded-full bg-yellow-100 flex items-center justify-center">
-                                            <svg class="h-4 w-4 text-yellow-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd" />
-                                            </svg>
-                                        </div>
-                                    {% endif %}
-                                </div>
-                                <div class="flex-1 min-w-0">
-                                    <p class="text-sm font-medium text-gray-900 truncate">
-                                        {{ job.original_filename }}
-                                    </p>
-                                    <p class="text-sm text-gray-500">
-                                        {{ job.created_at.strftime('%Y-%m-%d %H:%M') }} •
-                                        {% if job.processed_size and job.original_size %}
-                                            {{ "%.1f" | format(job.original_size / 1024 / 1024) }}MB → 
-                                            {{ "%.1f" | format(job.processed_size / 1024 / 1024) }}MB
-                                            <span class="text-green-600 font-medium">({{ "%.0f" | format((1 - job.processed_size / job.original_size) * 100) }}% smaller)</span>
-                                        {% else %}
-                                            {{ "%.1f" | format(job.original_size / 1024 / 1024) }}MB
-                                        {% endif %}
-                                    </p>
-                                </div>
-                                <div class="flex-shrink-0">
-                                    {% if job.status == 'completed' and not job.is_expired %}
-                                        <a href="{{ url_for('main.download_file', job_id=job.id) }}"
-                                           class="inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                                            Download
-                                        </a>
-                                    {% elif job.is_expired %}
-                                        <span class="inline-flex items-center px-2.5 py-1.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                                            Expired
-                                        </span>
-                                    {% else %}
-                                        <span class="inline-flex items-center px-2.5 py-1.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                                            {{ job.status.title() }}
-                                        </span>
-                                    {% endif %}
-                                </div>
-                            </div>
-                        </li>
-                        {% endfor %}
-                    </ul>
-                </div>
-            {% else %}
-                <div class="text-center py-12">
-                    <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                        <path vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-                    </svg>
-                    <h3 class="mt-2 text-sm font-medium text-gray-900">No files processed yet</h3>
-                    <p class="mt-1 text-sm text-gray-500">Get started by uploading your first PDF file above.</p>
-                </div>
-            {% endif %}
         </div>
     </div>
 </div>
@@ -622,22 +532,6 @@ function initializeQualitySelection() {
             if (savedRadio) {
                 savedRadio.checked = true;
                 updateSelection(savedLevel);
-                
-                // Show a subtle indication that preference was restored
-                const qualitySettings = document.getElementById('qualitySettings');
-                if (qualitySettings) {
-                    const indicator = document.createElement('div');
-                    indicator.className = 'text-xs text-green-600 mt-1 opacity-75';
-                    indicator.innerHTML = '✓ Your last compression preference restored';
-                    qualitySettings.appendChild(indicator);
-                    
-                    // Remove the indicator after 3 seconds
-                    setTimeout(() => {
-                        if (indicator && indicator.parentNode) {
-                            indicator.parentNode.removeChild(indicator);
-                        }
-                    }, 3000);
-                }
                 return;
             }
         }
