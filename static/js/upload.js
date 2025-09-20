@@ -208,22 +208,61 @@ class FileUploader {
         this.setFormDisabled(true);
         
         try {
-            // Upload the first file (simplified interface handles one file at a time)
-            const file = this.selectedFiles[0];
-            const result = await this.uploadFile(file, quality);
+            const totalFiles = this.selectedFiles.length;
+            let successCount = 0;
+            let failedCount = 0;
+            const failedFiles = [];
             
-            if (result && result.job_id) {
-                Utils.showNotification(
-                    `Successfully uploaded ${file.name} for processing`, 
-                    'success'
-                );
+            // Update button to show progress
+            this.updateUploadProgress(0, totalFiles);
+            
+            // Upload all files sequentially
+            for (let i = 0; i < this.selectedFiles.length; i++) {
+                const file = this.selectedFiles[i];
                 
-                // Redirect to history page to see the processing status
+                try {
+                    const result = await this.uploadFile(file, quality);
+                    
+                    if (result && result.job_id) {
+                        successCount++;
+                    } else {
+                        failedCount++;
+                        failedFiles.push(file.name);
+                    }
+                } catch (error) {
+                    console.error(`Upload error for ${file.name}:`, error);
+                    failedCount++;
+                    failedFiles.push(file.name);
+                }
+                
+                // Update progress
+                this.updateUploadProgress(i + 1, totalFiles);
+            }
+            
+            // Show consolidated success message
+            if (successCount > 0 && failedCount === 0) {
+                // All files uploaded successfully
+                const message = totalFiles === 1 
+                    ? `Successfully uploaded 1 file for processing`
+                    : `Done uploading ${successCount} files for processing`;
+                Utils.showNotification(message, 'success');
+            } else if (successCount > 0 && failedCount > 0) {
+                // Some files failed
+                const message = `Uploaded ${successCount} files successfully, ${failedCount} failed`;
+                Utils.showNotification(message, 'warning');
+            } else {
+                // All files failed
+                const message = totalFiles === 1 
+                    ? 'Upload failed'
+                    : `All ${totalFiles} uploads failed`;
+                Utils.showNotification(message, 'error');
+            }
+            
+            // Redirect to history page to see the processing status
+            if (successCount > 0) {
                 setTimeout(() => {
                     window.location.href = '/history';
                 }, 1500);
-            } else {
-                Utils.showNotification(result?.message || 'Upload failed', 'error');
             }
             
         } catch (error) {
@@ -269,14 +308,9 @@ class FileUploader {
         }
     }
     
-    setFormDisabled(disabled) {
-        const inputs = this.uploadForm.querySelectorAll('input, button');
-        inputs.forEach(input => {
-            input.disabled = disabled;
-        });
-        
-        if (disabled) {
-            this.uploadButton.textContent = 'Uploading...';
+    updateUploadProgress(current, total) {
+        if (total === 1) {
+            // Single file - show simple uploading message
             this.uploadButton.innerHTML = `
                 <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -285,8 +319,27 @@ class FileUploader {
                 Uploading...
             `;
         } else {
+            // Multiple files - show progress
+            this.uploadButton.innerHTML = `
+                <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Uploading ${current}/${total}...
+            `;
+        }
+    }
+
+    setFormDisabled(disabled) {
+        const inputs = this.uploadForm.querySelectorAll('input, button');
+        inputs.forEach(input => {
+            input.disabled = disabled;
+        });
+        
+        if (!disabled) {
             this.uploadButton.innerHTML = 'Upload and Compress';
         }
+        // Note: When disabled=true, the button text is set by updateUploadProgress()
     }
     
     resetForm() {
