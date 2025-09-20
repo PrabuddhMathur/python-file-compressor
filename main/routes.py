@@ -333,6 +333,61 @@ def api_recent_jobs():
         }), 500
 
 
+@main.route('/api/user/stats')
+@login_required
+def api_user_stats():
+    """Get user statistics via API."""
+    try:
+        from config import Config
+        
+        # Get usage stats
+        usage_stats = current_user.get_usage_stats(
+            daily_file_limit=Config.DAILY_FILE_LIMIT,
+            daily_storage_limit_mb=Config.DAILY_STORAGE_LIMIT_MB,
+            session_storage_limit_mb=Config.SESSION_STORAGE_LIMIT_MB
+        )
+        
+        return jsonify({
+            'success': True,
+            'user': {
+                'id': current_user.id,
+                'email': current_user.email,
+                'full_name': current_user.full_name,
+                'is_active': current_user.is_active
+            },
+            'usage': usage_stats
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting user stats: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Error getting user statistics'
+        }), 500
+
+
+@main.route('/api/user/clear-session', methods=['POST'])
+@login_required
+def api_clear_session():
+    """Clear user session storage via API."""
+    try:
+        current_user.clear_session_storage()
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Session storage cleared successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error clearing session storage: {e}")
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': 'Error clearing session storage'
+        }), 500
+
+
 @main.errorhandler(404)
 def not_found_error(error):
     """Handle 404 errors."""

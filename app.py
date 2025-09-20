@@ -98,10 +98,9 @@ def init_extensions(app):
                 'success': False,
                 'message': 'Authentication required'
             }), 401
-        return jsonify({
-            'success': False,
-            'message': 'Please log in to access this page'
-        }), 401
+        # For regular page requests, redirect to login
+        from flask import redirect, url_for
+        return redirect(url_for('auth.login'))
     
     # Handle session cleanup for expired/invalid sessions
     from flask import session
@@ -221,6 +220,14 @@ def setup_error_handlers(app):
             'error_code': 404
         }), 404
     
+    @app.errorhandler(405)
+    def method_not_allowed(error):
+        return jsonify({
+            'success': False,
+            'message': 'Method not allowed',
+            'error_code': 405
+        }), 405
+    
     @app.errorhandler(413)
     def request_entity_too_large(error):
         return jsonify({
@@ -249,6 +256,11 @@ def setup_error_handlers(app):
     
     @app.errorhandler(Exception)
     def handle_exception(error):
+        # Don't handle HTTP exceptions (they have their own handlers)
+        from werkzeug.exceptions import HTTPException
+        if isinstance(error, HTTPException):
+            return error
+            
         app.logger.error(f'Unhandled Exception: {error}')
         db.session.rollback()
         return jsonify({

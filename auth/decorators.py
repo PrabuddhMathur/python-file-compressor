@@ -187,6 +187,11 @@ def handle_exceptions(f):
                 'message': 'Resource not found'
             }), 404
         except Exception as e:
+            # Handle HTTP exceptions by re-raising them
+            from werkzeug.exceptions import HTTPException
+            if isinstance(e, HTTPException):
+                raise e
+                
             current_app.logger.error(f"Unexpected error in {f.__name__}: {e}")
             return jsonify({
                 'success': False,

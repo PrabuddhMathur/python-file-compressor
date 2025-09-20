@@ -142,6 +142,12 @@ def upload_file():
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Upload failed: {e}")
+        
+        # Check if it's a 413 error and re-raise it
+        from werkzeug.exceptions import RequestEntityTooLarge
+        if isinstance(e, RequestEntityTooLarge):
+            raise e
+            
         return jsonify({
             'success': False,
             'message': 'Upload failed. Please try again.'

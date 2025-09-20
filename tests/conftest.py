@@ -16,13 +16,12 @@ def app():
     # Create a temporary database file
     db_fd, db_path = tempfile.mkstemp()
     
-    app = create_app({
-        'TESTING': True,
-        'SECRET_KEY': 'test-secret-key',
+    app = create_app('testing')
+    
+    # Override specific test configurations
+    app.config.update({
         'SQLALCHEMY_DATABASE_URI': f'sqlite:///{db_path}',
-        'WTF_CSRF_ENABLED': False,
         'UPLOAD_FOLDER': tempfile.mkdtemp(),
-        'MAX_CONTENT_LENGTH': 25 * 1024 * 1024,  # 25MB
     })
 
     with app.app_context():
