@@ -71,16 +71,17 @@
         </div>
     </nav>
 
-    <!-- Flash Messages -->
+    <!-- Flash Messages (converted to side notifications) -->
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
-            <div class="max-w-7xl mx-auto px-4 py-4">
-                {% for category, message in messages %}
-                    <div class="mb-4 p-4 rounded-md {% if category == 'error' %}bg-red-100 border border-red-400 text-red-700{% elif category == 'warning' %}bg-yellow-100 border border-yellow-400 text-yellow-700{% elif category == 'success' %}bg-green-100 border border-green-400 text-green-700{% else %}bg-blue-100 border border-blue-400 text-blue-700{% endif %}">
-                        {{ message }}
-                    </div>
-                {% endfor %}
-            </div>
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    // Convert flash messages to side toast notifications
+                    {% for category, message in messages %}
+                        Utils.showNotification('{{ message | safe }}', '{{ category }}', 10000);
+                    {% endfor %}
+                });
+            </script>
         {% endif %}
     {% endwith %}
 
@@ -101,6 +102,7 @@
 
     <!-- JavaScript -->
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    
     {% block extra_js %}{% endblock %}
 </body>
 </html>
