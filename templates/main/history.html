@@ -49,10 +49,6 @@
         height: 4px;
         transition: width 0.5s ease;
     }
-    .stats-summary {
-        background: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
-        border: 1px solid rgba(0, 0, 0, 0.05);
-    }
     .filter-button {
         transition: all 0.3s ease;
         border-radius: 0.5rem;
@@ -107,47 +103,10 @@
 
 {% block content %}
 <div class="space-y-8">
-    <!-- Header with Enhanced Statistics -->
-    <div class="stats-summary shadow rounded-xl p-6">
-        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between">
-            <div>
-                <h1 class="text-2xl font-bold text-gray-900">Processing History</h1>
-                <p class="mt-2 text-gray-600">Track your PDF compression results and download processed files.</p>
-            </div>
-            
-            <!-- Quick Stats -->
-            <div class="mt-6 lg:mt-0 grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <div class="text-center">
-                    <div class="text-2xl font-bold text-blue-600">{{ jobs.total or 0 }}</div>
-                    <div class="text-sm text-gray-500">Total Files</div>
-                </div>
-                <div class="text-center">
-                    <div class="text-2xl font-bold text-green-600">
-                        {% set completed_count = jobs.items | selectattr('status', 'equalto', 'completed') | list | length %}
-                        {{ completed_count }}
-                    </div>
-                    <div class="text-sm text-gray-500">Completed</div>
-                </div>
-                <div class="text-center">
-                    <div class="text-2xl font-bold text-orange-600">
-                        {% set total_saved = jobs.items | selectattr('original_size') | selectattr('processed_size') | map(attribute='original_size') | sum - jobs.items | selectattr('original_size') | selectattr('processed_size') | map(attribute='processed_size') | sum %}
-                        {{ "%.1f" | format((total_saved or 0) / 1024 / 1024) }}MB
-                    </div>
-                    <div class="text-sm text-gray-500">Space Saved</div>
-                </div>
-                <div class="text-center">
-                    <div class="text-2xl font-bold text-purple-600">
-                        {% if total_saved > 0 %}
-                            {% set original_total = jobs.items | selectattr('original_size') | map(attribute='original_size') | sum %}
-                            {{ "%.0f" | format((total_saved / original_total * 100) if original_total > 0 else 0) }}%
-                        {% else %}
-                            0%
-                        {% endif %}
-                    </div>
-                    <div class="text-sm text-gray-500">Avg. Reduction</div>
-                </div>
-            </div>
-        </div>
+    <!-- Simple Header -->
+    <div class="bg-white shadow rounded-xl p-6">
+        <h1 class="text-2xl font-bold text-gray-900">Processing History</h1>
+        <p class="mt-2 text-gray-600">Track your PDF compression results and download processed files.</p>
     </div>
 
     <!-- Enhanced Filters and Search -->
