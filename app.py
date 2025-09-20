@@ -71,13 +71,23 @@ def create_app(config_name=None):
     with app.app_context():
         try:
             create_database_tables()
+        except Exception as e:
+            app.logger.error(f"Database table creation error: {e}")
+            # Continue without database creation for now
+        
+        # Always attempt admin creation after table creation
+        try:
             create_default_admin()
         except Exception as e:
-            app.logger.error(f"Database initialization error: {e}")
-            # Continue without database for now
+            app.logger.error(f"Admin creation error: {e}")
+            print(f"Failed to create admin user: {e}")
+            # Continue without admin creation for now
     
     # Add health check endpoints
     setup_health_checks(app)
+    
+    # Set up request handlers
+    setup_request_handlers(app)
     
     return app
 
@@ -311,33 +321,59 @@ def create_database_tables():
 def create_default_admin():
     """Create default admin user if no admin exists."""
     try:
+        # Ensure database tables exist first
+        db.create_all()
+        
         # Check if any admin user exists
         admin_exists = User.query.filter_by(is_admin=True).first()
         
         if not admin_exists:
-            # Create default admin user
-            admin_email = os.environ.get('ADMIN_EMAIL', 'admin@example.com')
-            admin_password = os.environ.get('ADMIN_PASSWORD', 'admin123')
+            # Get admin credentials from environment variables
+            admin_email = os.environ.get('ADMIN_EMAIL', 'admin@prabuddh.in')
+            admin_password = os.environ.get('ADMIN_PASSWORD', 'SecureAdminPass123!')
+            admin_name = os.environ.get('ADMIN_NAME', 'System Administrator')
             
+            print(f"Creating admin user with email: {admin_email}")
+            
+            # Create default admin user from environment variables
             admin_user = User(
                 email=admin_email,
-                full_name='System Administrator',
+                full_name=admin_name,
                 is_active=True,
                 is_admin=True
             )
             admin_user.set_password(admin_password)
             admin_user.approved_at = datetime.utcnow()
             
+            # Add to database
             db.session.add(admin_user)
             db.session.commit()
             
-            print(f"Default admin user created: {admin_email}")
-            print(f"Default admin password: {admin_password}")
-            print("Please change the admin password after first login!")
+            print(f"✅ Default admin user created successfully!")
+            print(f"   Email: {admin_email}")
+            print(f"   Name: {admin_name}")
+            print(f"   Active: True")
+            print(f"   Admin: True")
+            print("Admin user is now ready to approve other users!")
+            
+            # Verify the admin was created
+            verify_admin = User.query.filter_by(email=admin_email).first()
+            if verify_admin and verify_admin.is_admin:
+                print(f"✅ Admin user verification successful - ID: {verify_admin.id}")
+            else:
+                print("❌ Admin user verification failed")
+                
+        else:
+            print(f"ℹ️  Admin user already exists: {admin_exists.email}")
         
     except Exception as e:
-        print(f"Error creating default admin user: {e}")
-        db.session.rollback()
+        print(f"❌ Error creating default admin user: {e}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        try:
+            db.session.rollback()
+        except:
+            pass
 
 def setup_health_checks(app):
     """Set up health check endpoints."""
@@ -393,6 +429,21 @@ def setup_health_checks(app):
             'checks': checks
         }), status_code
     
+    @app.route('/debug/info')
+    def debug_info():
+        """Debug information endpoint."""
+        import sys
+        return jsonify({
+            'status': 'ok',
+            'python_version': sys.version,
+            'flask_env': app.config.get('ENV'),
+            'debug': app.config.get('DEBUG'),
+            'database_uri': app.config.get('SQLALCHEMY_DATABASE_URI', '').replace('password', '***') if 'password' in app.config.get('SQLALCHEMY_DATABASE_URI', '') else app.config.get('SQLALCHEMY_DATABASE_URI'),
+            'upload_folder': app.config.get('UPLOAD_FOLDER'),
+            'vercel_env': os.environ.get('VERCEL', 'not_set'),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+    
     @app.route('/metrics')
     def metrics():
         """Basic metrics endpoint."""
@@ -417,6 +468,69 @@ def setup_health_checks(app):
             return jsonify({
                 'error': 'Failed to retrieve metrics'
             }), 500
+
+    @app.route('/debug/create-admin')
+    def debug_create_admin():
+        """Debug endpoint to manually create admin user."""
+        try:
+            # Get current admin status
+            admin_count = User.query.filter_by(is_admin=True).count()
+            
+            result = {
+                'before_creation': {
+                    'admin_users_count': admin_count,
+                    'total_users': User.query.count()
+                }
+            }
+            
+            # Try to create admin
+            create_default_admin()
+            
+            # Check after creation
+            admin_count_after = User.query.filter_by(is_admin=True).count()
+            admin_users = User.query.filter_by(is_admin=True).all()
+            
+            result['after_creation'] = {
+                'admin_users_count': admin_count_after,
+                'total_users': User.query.count(),
+                'admin_users': [{'id': u.id, 'email': u.email, 'name': u.full_name, 'active': u.is_active} for u in admin_users]
+            }
+            
+            result['success'] = True
+            result['message'] = 'Admin creation process completed'
+            
+            return jsonify(result), 200
+            
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': str(e),
+                'message': 'Failed to create admin user'
+            }), 500
+
+def setup_request_handlers(app):
+    """Set up global request handlers."""
+    
+    @app.before_request
+    def before_request():
+        """Execute before each request."""
+        # Log API requests (excluding health checks)
+        if (request.path.startswith('/api/') and 
+            not request.path.startswith('/health/') and 
+            not request.path.startswith('/metrics')):
+            
+            app.logger.info(f"{request.method} {request.path} from {request.remote_addr}")
+
+    @app.after_request
+    def after_request(response):
+        """Execute after each request."""
+        # Add security headers
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+        
+        return response
 
 # Create the application instance
 app = create_app()
@@ -469,28 +583,6 @@ def list_users():
         print(f"{user.id:<5} {user.email:<30} {user.full_name:<25} "
               f"{'Yes' if user.is_active else 'No':<8} "
               f"{'Yes' if user.is_admin else 'No':<8}")
-
-# Global request handlers
-@app.before_request
-def before_request():
-    """Execute before each request."""
-    # Log API requests (excluding health checks)
-    if (request.path.startswith('/api/') and 
-        not request.path.startswith('/health/') and 
-        not request.path.startswith('/metrics')):
-        
-        app.logger.info(f"{request.method} {request.path} from {request.remote_addr}")
-
-@app.after_request
-def after_request(response):
-    """Execute after each request."""
-    # Add security headers
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['X-XSS-Protection'] = '1; mode=block'
-    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-    
-    return response
 
 # Create app instance for both local and Vercel deployment
 app = create_app()
