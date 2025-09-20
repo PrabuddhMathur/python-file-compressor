@@ -45,15 +45,21 @@ class FileManager:
         for directory in directories:
             SecurityUtils.create_secure_directory(directory)
     
-    def save_uploaded_file(self, file, user_id, job_id):
+    def save_uploaded_file(self, file, user_id, job_id, session_id=None):
         """Save uploaded file to storage."""
         try:
             # Generate secure filename
             original_filename = file.filename
-            secure_name = SecurityUtils.generate_secure_filename(original_filename, user_id)
             
-            # Create user-specific directory
-            upload_dir = self._get_user_upload_dir(user_id)
+            # Use session_id if available, otherwise use user_id for backward compatibility
+            identifier = session_id or user_id or 'anonymous'
+            secure_name = SecurityUtils.generate_secure_filename(original_filename, identifier)
+            
+            # Create session/user-specific directory
+            if session_id:
+                upload_dir = self._get_session_upload_dir(session_id)
+            else:
+                upload_dir = self._get_user_upload_dir(user_id or 'anonymous')
             SecurityUtils.create_secure_directory(upload_dir)
             
             # Full file path
@@ -92,7 +98,7 @@ class FileManager:
                 'error': str(e)
             }
     
-    def get_processed_file_path(self, user_id, job_id, original_filename):
+    def get_processed_file_path(self, user_id, job_id, original_filename, session_id=None):
         """Generate path for processed file."""
         # Get file extension
         if '.' in original_filename:
@@ -102,10 +108,14 @@ class FileManager:
         
         # Generate processed filename
         timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-        processed_filename = f"{user_id}_{job_id}_{timestamp}_processed.{ext}"
+        identifier = session_id or user_id or 'anonymous'
+        processed_filename = f"{identifier}_{job_id}_{timestamp}_processed.{ext}"
         
         # Create processed directory
-        processed_dir = self._get_user_processed_dir(user_id)
+        if session_id:
+            processed_dir = self._get_session_processed_dir(session_id)
+        else:
+            processed_dir = self._get_user_processed_dir(user_id or 'anonymous')
         SecurityUtils.create_secure_directory(processed_dir)
         
         return os.path.join(processed_dir, processed_filename)
@@ -218,6 +228,40 @@ class FileManager:
         
         except Exception as e:
             current_app.logger.error(f"Failed to clear session files for user {user_id}: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def clear_session_files(self, session_id):
+        """Clear all files for a session."""
+        try:
+            # Get all active jobs for session
+            active_jobs = ProcessingJob.get_session_active_jobs(session_id)
+            
+            files_cleared = 0
+            for job in active_jobs:
+                files_cleared += self.delete_job_files(job)
+            
+            # Mark session jobs as expired
+            ProcessingJob.cleanup_session_jobs(session_id)
+            
+            # Log session clear
+            AuditLog.log_session_clear(
+                user_id=None,  # No user for session-based cleanup
+                ip_address='system',
+                files_cleared=files_cleared,
+                details=f"Session cleanup: {session_id}"
+            )
+            
+            return {
+                'success': True,
+                'files_cleared': files_cleared,
+                'jobs_affected': len(active_jobs)
+            }
+        
+        except Exception as e:
+            current_app.logger.error(f"Failed to clear session files for session {session_id}: {e}")
             return {
                 'success': False,
                 'error': str(e)
@@ -437,12 +481,26 @@ class FileManager:
     def _get_user_upload_dir(self, user_id):
         """Get user-specific upload directory."""
         date_str = datetime.utcnow().strftime('%Y-%m-%d')
-        return os.path.join(self.upload_folder, 'uploads', str(user_id), date_str)
+        # Handle case where user_id is None (no authentication)
+        user_folder = 'anonymous' if user_id is None else str(user_id)
+        return os.path.join(self.upload_folder, 'uploads', user_folder, date_str)
     
     def _get_user_processed_dir(self, user_id):
         """Get user-specific processed files directory."""
         date_str = datetime.utcnow().strftime('%Y-%m-%d')
-        return os.path.join(self.upload_folder, 'processed', str(user_id), date_str)
+        # Handle case where user_id is None (no authentication)
+        user_folder = 'anonymous' if user_id is None else str(user_id)
+        return os.path.join(self.upload_folder, 'processed', user_folder, date_str)
+    
+    def _get_session_upload_dir(self, session_id):
+        """Get session-specific upload directory."""
+        date_str = datetime.utcnow().strftime('%Y-%m-%d')
+        return os.path.join(self.upload_folder, 'uploads', 'sessions', session_id, date_str)
+    
+    def _get_session_processed_dir(self, session_id):
+        """Get session-specific processed files directory."""
+        date_str = datetime.utcnow().strftime('%Y-%m-%d')
+        return os.path.join(self.upload_folder, 'processed', 'sessions', session_id, date_str)
     
     def _start_cleanup_thread(self):
         """Start background cleanup thread."""

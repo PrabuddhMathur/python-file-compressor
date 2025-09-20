@@ -25,7 +25,9 @@ class SecurityUtils:
         timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
         random_part = secrets.token_hex(8)
         
-        secure_name = f"{user_id}_{timestamp}_{random_part}"
+        # Handle case where user_id is None (no authentication)
+        user_part = 'anon' if user_id is None else str(user_id)
+        secure_name = f"{user_part}_{timestamp}_{random_part}"
         if ext:
             secure_name += f".{ext}"
         

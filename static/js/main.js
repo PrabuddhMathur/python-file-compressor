@@ -6,8 +6,38 @@ function getCSRFToken() {
     return token === 'disabled' ? null : token;
 }
 
+// Session management
+const SessionManager = {
+    // Setup session management without automatic cleanup
+    setupSessionCleanup: function() {
+        // Sessions persist until manually cleared by user
+        // No automatic cleanup to prevent accidental session loss during navigation
+        console.log('Session management initialized - sessions persist until manually cleared');
+    },
+    
+    // Manually clear session
+    clearSession: function() {
+        return fetch('/api/process/session/clear', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            }
+        }).then(response => response.json());
+    },
+    
+    // Get current session jobs
+    getSessionJobs: function() {
+        return fetch('/api/process/session/jobs')
+            .then(response => response.json());
+    }
+};
+
 // Global AJAX setup for CSRF
 document.addEventListener('DOMContentLoaded', function() {
+    // Set up session cleanup
+    SessionManager.setupSessionCleanup();
+    
     // Set up CSRF token for all AJAX requests
     const csrfToken = getCSRFToken();
     if (csrfToken) {
@@ -175,11 +205,6 @@ const API = {
     // Get user quota information
     getUserQuota: function() {
         return this.request('/api/user/quota');
-    },
-    
-    // Clear session files
-    clearSession: function() {
-        return this.request('/api/user/clear-session', { method: 'POST' });
     },
     
     // Get job status

@@ -1,5 +1,4 @@
-from flask import render_template, request, redirect, url_for, flash, jsonify
-from flask_login import login_required, current_user
+from flask import render_template, request, redirect, url_for, flash, jsonify, send_file, session
 from sqlalchemy import desc
 from . import main
 from models import db
@@ -9,54 +8,57 @@ from models.audit_log import AuditLog
 from utils.validators import InputValidator
 from services.file_manager import file_manager
 import logging
+import os
+import io
+import zipfile
+from datetime import datetime
+from werkzeug.utils import secure_filename
+import unicodedata
+import re
 
 logger = logging.getLogger(__name__)
 
 
 @main.route('/')
-def index():
-    """Home page - redirect logged-in users to dashboard."""
-    if current_user.is_authenticated:
-        return redirect(url_for('main.dashboard'))
-    return redirect(url_for('auth.login'))
-
-
-@main.route('/dashboard')
-@login_required
 def dashboard():
-    """User dashboard."""
+    """Main dashboard page - now available to all users."""
     try:
         # Define default limits (these could be moved to config)
         daily_file_limit = 20
         daily_storage_limit_mb = 100
         session_storage_limit_mb = 50
         
-        # Get user's quota information
+        # Get quota information (simplified without user context)
         quota_info = {
-            'daily_usage': current_user.get_daily_usage(),
+            'daily_usage': {'files': 0, 'storage_mb': 0},
             'daily_limits': {
                 'files': daily_file_limit,
                 'storage_mb': daily_storage_limit_mb
             },
-            'session_usage': current_user.get_session_usage(),
+            'session_usage': {'files': 0, 'storage_mb': 0},
             'session_limits': {
                 'files': 20,  # Default session limit
                 'storage_mb': session_storage_limit_mb
             }
         }
         
-        # Get recent processing jobs (last 10)
-        recent_jobs = ProcessingJob.query.filter_by(user_id=current_user.id)\
-                                        .order_by(desc(ProcessingJob.created_at))\
-                                        .limit(10)\
-                                        .all()
+        # Get recent processing jobs for current session (last 10)
+        session_id = session.get('session_id')
+        
+        if session_id:
+            recent_jobs = ProcessingJob.query.filter_by(session_id=session_id)\
+                                            .order_by(desc(ProcessingJob.created_at))\
+                                            .limit(10)\
+                                            .all()
+        else:
+            recent_jobs = []
         
         return render_template('main/dashboard.html', 
                              quota_info=quota_info, 
                              recent_jobs=recent_jobs)
                              
     except Exception as e:
-        logger.error(f"Dashboard error for user {current_user.id}: {e}")
+        logger.error(f"Dashboard error: {e}")
         flash('Error loading dashboard. Please try again.', 'error')
         return render_template('main/dashboard.html', 
                              quota_info={'daily_usage': {'files': 0, 'storage_mb': 0}, 
@@ -67,161 +69,166 @@ def dashboard():
 
 
 @main.route('/history')
-@login_required
 def history():
-    """Processing history page."""
+    """Processing history page - session-based."""
     try:
+        # Get session ID
+        session_id = session.get('session_id')
+        
         page = request.args.get('page', 1, type=int)
         per_page = 20
         
-        jobs = ProcessingJob.query.filter_by(user_id=current_user.id)\
-                                 .order_by(desc(ProcessingJob.created_at))\
-                                 .paginate(
-                                     page=page, 
-                                     per_page=per_page, 
-                                     error_out=False
-                                 )
+        if session_id:
+            # Show jobs for current session
+            jobs = ProcessingJob.query.filter_by(session_id=session_id)\
+                                     .order_by(desc(ProcessingJob.created_at))\
+                                     .paginate(
+                                         page=page, 
+                                         per_page=per_page, 
+                                         error_out=False
+                                     )
+        else:
+            # No session - show empty results
+            jobs = ProcessingJob.query.filter_by(id=-1)\
+                                     .paginate(
+                                         page=page, 
+                                         per_page=per_page, 
+                                         error_out=False
+                                     )
         
         return render_template('main/history.html', jobs=jobs)
         
     except Exception as e:
-        logger.error(f"History error for user {current_user.id}: {e}")
+        logger.error(f"History error: {e}")
         flash('Error loading processing history.', 'error')
         return redirect(url_for('main.dashboard'))
 
 
 @main.route('/download/<int:job_id>')
-@login_required
 def download_file(job_id):
-    """Download processed file."""
+    """Download processed file with session verification."""
     try:
+        # Get session ID
+        session_id = session.get('session_id')
+        if not session_id:
+            flash('Session expired. Please upload a new file.', 'error')
+            return redirect(url_for('main.dashboard'))
+        
         job = ProcessingJob.query.get_or_404(job_id)
         
-        # Check if user owns this job
-        if job.user_id != current_user.id:
-            flash('You do not have permission to download this file.', 'error')
+        # Verify job belongs to this session
+        if job.session_id != session_id:
+            flash('Access denied - file does not belong to your session.', 'error')
             return redirect(url_for('main.dashboard'))
         
-        # Check if job is completed and not expired
+        # Check if file is ready for download
         if job.status != 'completed':
-            flash('File is not ready for download.', 'error')
-            return redirect(url_for('main.dashboard'))
-            
-        if job.is_expired:
-            flash('File has expired and is no longer available.', 'error')
-            return redirect(url_for('main.dashboard'))
+            flash('File processing not completed yet. Please wait.', 'warning')
+            return redirect(url_for('main.history'))
         
-        # Get file path using file manager
-        file_path = file_manager.get_file_download_path(job)
-        if not file_path:
-            flash('File not found or access denied.', 'error')
-            return redirect(url_for('main.dashboard'))
+        # Check if processed file exists
+        processed_path = job.get_processed_file_path()
+        if not processed_path or not os.path.exists(processed_path):
+            flash('Processed file not found. It may have been deleted.', 'error')
+            return redirect(url_for('main.history'))
         
-        # Log download
+        def make_safe_filename(filename):
+            # Remove non-ASCII characters and normalize
+            filename = unicodedata.normalize('NFKD', filename).encode('ascii', 'ignore').decode('ascii')
+            # Replace spaces and special characters with underscores
+            filename = re.sub(r'[^\w\s.\-]', '_', filename)
+            # Replace multiple spaces/underscores with single underscore
+            filename = re.sub(r'[\-\s_]+', '_', filename)
+            return filename.strip('_')
+        
+        # Create download filename
+        original_name = job.original_filename or 'compressed_file.pdf'
+        name_parts = os.path.splitext(original_name)
+        safe_name = make_safe_filename(name_parts[0])
+        download_filename = f"{safe_name}_compressed{name_parts[1]}"
+        
+        # Log file download (simplified without user context)
         AuditLog.log_file_download(
-            user_id=current_user.id,
-            job_id=job_id,
+            user_id=None,  # No user authentication
+            job_id=job.id,
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent')
         )
         
-        # Generate download filename
-        import os
-        original_name, ext = os.path.splitext(job.original_filename)
-        download_filename = f"{original_name}_compressed_{job.quality_preset}{ext}"
-        
-        # Send file
-        from flask import send_file
         return send_file(
-            file_path,
+            processed_path,
             as_attachment=True,
             download_name=download_filename,
             mimetype='application/pdf'
         )
         
     except Exception as e:
-        logger.error(f"Download error for job {job_id}, user {current_user.id}: {e}")
-        flash('Error downloading file.', 'error')
-        return redirect(url_for('main.dashboard'))
+        logger.error(f"Download error for job {job_id}: {e}")
+        flash('Error downloading file. Please try again.', 'error')
+        return redirect(url_for('main.history'))
 
 
-@main.route('/download-batch', methods=['POST'])
-@login_required
-def download_batch():
+@main.route('/batch-download', methods=['POST'])
+@main.route('/download-batch', methods=['POST'])  # Alias for frontend compatibility
+def batch_download():
     """Download multiple files as a ZIP archive."""
-    import io
-    import zipfile
-    import os
-    from flask import send_file
-    
     try:
-        data = request.get_json()
-        job_ids = data.get('job_ids', [])
+        # Get session ID for verification
+        session_id = session.get('session_id')
+        if not session_id:
+            return jsonify({'success': False, 'message': 'Session expired. Please refresh the page.'}), 403
+        
+        # Get job IDs from request
+        job_ids = request.json.get('job_ids', []) if request.is_json else request.form.getlist('job_ids')
         
         if not job_ids:
             return jsonify({'success': False, 'message': 'No files selected for download.'}), 400
         
-        if len(job_ids) > 50:  # Reasonable limit
-            return jsonify({'success': False, 'message': 'Too many files selected. Maximum 50 files allowed per batch.'}), 400
+        # Convert to integers
+        try:
+            job_ids = [int(job_id) for job_id in job_ids]
+        except ValueError:
+            return jsonify({'success': False, 'message': 'Invalid job IDs provided.'}), 400
         
-        # Validate all jobs belong to current user and are downloadable
+        # Get jobs with session verification
         jobs = ProcessingJob.query.filter(
             ProcessingJob.id.in_(job_ids),
-            ProcessingJob.user_id == current_user.id,
-            ProcessingJob.status == 'completed'
+            ProcessingJob.session_id == session_id  # Verify session ownership
         ).all()
         
-        if len(jobs) != len(job_ids):
-            return jsonify({'success': False, 'message': 'Some files are not available for download or do not belong to you.'}), 403
-        
-        # Check for expired files
-        expired_jobs = [job for job in jobs if job.is_expired]
-        if expired_jobs:
-            expired_names = [job.original_filename for job in expired_jobs]
-            return jsonify({
-                'success': False, 
-                'message': f'Some files have expired: {", ".join(expired_names[:3])}{"..." if len(expired_names) > 3 else ""}'
-            }), 410
+        if not jobs:
+            return jsonify({'success': False, 'message': 'No valid files found for download.'}), 404
         
         # Create ZIP file in memory
         zip_buffer = io.BytesIO()
         
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             for job in jobs:
-                # Get file path
-                file_path = file_manager.get_file_download_path(job)
-                if not file_path or not os.path.exists(file_path):
-                    logger.warning(f"File not found for job {job.id}: {file_path}")
+                try:
+                    processed_path = job.get_processed_file_path()
+                    if processed_path and os.path.exists(processed_path):
+                        # Create safe filename for ZIP entry
+                        original_name = job.original_filename or f'compressed_file_{job.id}.pdf'
+                        name_parts = os.path.splitext(original_name)
+                        zip_filename = f"{name_parts[0]}_compressed{name_parts[1]}"
+                        
+                        zip_file.write(processed_path, zip_filename)
+                except Exception as e:
+                    logger.warning(f"Error adding job {job.id} to ZIP: {e}")
                     continue
-                
-                # Generate filename for ZIP
-                original_name, ext = os.path.splitext(job.original_filename)
-                zip_filename = f"{original_name}_compressed_{job.quality_preset}{ext}"
-                
-                # Handle duplicate filenames by adding a number
-                counter = 1
-                base_zip_filename = zip_filename
-                while zip_filename in [info.filename for info in zip_file.infolist()]:
-                    name, ext = os.path.splitext(base_zip_filename)
-                    zip_filename = f"{name}_{counter}{ext}"
-                    counter += 1
-                
-                # Add file to ZIP
-                zip_file.write(file_path, zip_filename)
         
         zip_buffer.seek(0)
         
-        # Log batch download
+        # Log batch download (simplified without user context)
         for job in jobs:
             AuditLog.log_file_download(
-                user_id=current_user.id,
+                user_id=None,  # No user authentication
                 job_id=job.id,
                 ip_address=request.remote_addr,
                 user_agent=request.headers.get('User-Agent')
             )
         
         # Generate download filename with timestamp
-        from datetime import datetime
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         zip_filename = f"compressed_files_{timestamp}.zip"
         
@@ -233,7 +240,7 @@ def download_batch():
         )
         
     except Exception as e:
-        logger.error(f"Batch download error for user {current_user.id}: {e}")
+        logger.error(f"Batch download error: {e}")
         return jsonify({'success': False, 'message': 'Error creating download archive. Please try again.'}), 500
 
 
@@ -261,47 +268,11 @@ def terms():
     return render_template('main/terms.html')
 
 
-# Admin routes
-@main.route('/admin')
-@login_required
-def admin_dashboard():
-    """Admin dashboard."""
-    if not current_user.is_admin:
-        flash('Access denied. Admin privileges required.', 'error')
-        return redirect(url_for('main.dashboard'))
-    
-    try:
-        # Get system statistics
-        total_users = User.query.count()
-        active_users = User.query.filter_by(is_active=True).count()
-        pending_users = User.query.filter_by(is_active=False).count()
-        admin_users = User.query.filter_by(is_admin=True).count()
-        
-        # Get recent activity
-        recent_jobs = ProcessingJob.query.order_by(desc(ProcessingJob.created_at)).limit(10).all()
-        
-        stats = {
-            'total_users': total_users,
-            'active_users': active_users,
-            'pending_users': pending_users,
-            'admin_users': admin_users,
-            'recent_jobs': recent_jobs
-        }
-        
-        return render_template('main/admin_dashboard.html', stats=stats)
-        
-    except Exception as e:
-        logger.error(f"Admin dashboard error: {e}")
-        flash('Error loading admin dashboard.', 'error')
-        return redirect(url_for('main.dashboard'))
-
-
 @main.route('/api/recent-jobs')
-@login_required
 def api_recent_jobs():
-    """API endpoint to get recent jobs for the current user."""
+    """API endpoint to get recent jobs (no authentication required)."""
     try:
-        recent_jobs = ProcessingJob.query.filter_by(user_id=current_user.id).order_by(
+        recent_jobs = ProcessingJob.query.order_by(
             desc(ProcessingJob.created_at)
         ).limit(10).all()
         
@@ -326,65 +297,10 @@ def api_recent_jobs():
         })
         
     except Exception as e:
-        logger.error(f"Error fetching recent jobs for user {current_user.id}: {e}")
+        logger.error(f"Error fetching recent jobs: {e}")
         return jsonify({
             'success': False,
             'message': 'Error fetching recent jobs'
-        }), 500
-
-
-@main.route('/api/user/stats')
-@login_required
-def api_user_stats():
-    """Get user statistics via API."""
-    try:
-        from config import Config
-        
-        # Get usage stats
-        usage_stats = current_user.get_usage_stats(
-            daily_file_limit=Config.DAILY_FILE_LIMIT,
-            daily_storage_limit_mb=Config.DAILY_STORAGE_LIMIT_MB,
-            session_storage_limit_mb=Config.SESSION_STORAGE_LIMIT_MB
-        )
-        
-        return jsonify({
-            'success': True,
-            'user': {
-                'id': current_user.id,
-                'email': current_user.email,
-                'full_name': current_user.full_name,
-                'is_active': current_user.is_active
-            },
-            'usage': usage_stats
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting user stats: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Error getting user statistics'
-        }), 500
-
-
-@main.route('/api/user/clear-session', methods=['POST'])
-@login_required
-def api_clear_session():
-    """Clear user session storage via API."""
-    try:
-        current_user.clear_session_storage()
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Session storage cleared successfully'
-        })
-        
-    except Exception as e:
-        logger.error(f"Error clearing session storage: {e}")
-        db.session.rollback()
-        return jsonify({
-            'success': False,
-            'message': 'Error clearing session storage'
         }), 500
 
 

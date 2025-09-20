@@ -223,7 +223,7 @@ class FileUploader {
                 try {
                     const result = await this.uploadFile(file, quality);
                     
-                    if (result && result.job_id) {
+                    if (result && result.success && result.job && result.job.id) {
                         successCount++;
                     } else {
                         failedCount++;

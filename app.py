@@ -2,7 +2,7 @@ import os
 import logging
 from logging.handlers import RotatingFileHandler
 from flask import Flask, jsonify, request
-from flask_login import LoginManager
+# from flask_login import LoginManager  # Disabled - no authentication
 from flask_wtf.csrf import CSRFProtect
 from datetime import datetime
 from dotenv import load_dotenv
@@ -20,7 +20,7 @@ from models.processing_job import ProcessingJob
 from models.audit_log import AuditLog
 
 # Import blueprints
-from auth import auth as auth_blueprint
+# from auth import auth as auth_blueprint  # Disabled - no authentication
 from api import api as api_blueprint
 from main import main as main_blueprint
 
@@ -75,13 +75,7 @@ def create_app(config_name=None):
             app.logger.error(f"Database table creation error: {e}")
             # Continue without database creation for now
         
-        # Always attempt admin creation after table creation
-        try:
-            create_default_admin()
-        except Exception as e:
-            app.logger.error(f"Admin creation error: {e}")
-            print(f"Failed to create admin user: {e}")
-            # Continue without admin creation for now
+        # Admin creation removed - no authentication needed
     
     # Add health check endpoints
     setup_health_checks(app)
@@ -105,66 +99,66 @@ def init_extensions(app):
     def inject_csrf_token():
         return dict(csrf_token=lambda: "")
     
-    # Initialize login manager
-    login_manager = LoginManager()
-    login_manager.init_app(app)
-    login_manager.login_view = 'auth.login'
-    login_manager.login_message = 'Please log in to access this page.'
-    login_manager.login_message_category = 'info'
+    # Login manager disabled - no authentication required
+    # login_manager = LoginManager()
+    # login_manager.init_app(app)
+    # login_manager.login_view = 'auth.login'
+    # login_manager.login_message = 'Please log in to access this page.'
+    # login_manager.login_message_category = 'info'
     
-    @login_manager.user_loader
-    def load_user(user_id):
-        return User.query.get(int(user_id))
+    # @login_manager.user_loader
+    # def load_user(user_id):
+    #     return User.query.get(int(user_id))
     
-    @login_manager.unauthorized_handler
-    def unauthorized():
-        if request.is_json or request.path.startswith('/api/'):
-            return jsonify({
-                'success': False,
-                'message': 'Authentication required'
-            }), 401
-        # For regular page requests, redirect to login
-        from flask import redirect, url_for
-        return redirect(url_for('auth.login'))
+    # @login_manager.unauthorized_handler
+    # def unauthorized():
+    #     if request.is_json or request.path.startswith('/api/'):
+    #         return jsonify({
+    #             'success': False,
+    #             'message': 'Authentication required'
+    #         }), 401
+    #     # For regular page requests, redirect to login
+    #     from flask import redirect, url_for
+    #     return redirect(url_for('auth.login'))
     
-    # Handle session cleanup for expired/invalid sessions
-    from flask import session
-    from flask_login import current_user
+    # Session cleanup disabled - no user sessions
+    # from flask import session
+    # from flask_login import current_user
     
-    @app.before_request
-    def cleanup_expired_sessions():
-        """Clean up user data when session expires or becomes invalid."""
-        # Skip for static files and auth routes to avoid recursion
-        if (request.endpoint and 
-            (request.endpoint.startswith('static') or 
-             request.endpoint.startswith('auth.login') or
-             request.endpoint.startswith('auth.register'))):
-            return
-            
-        # Check if we have a user ID in session but no valid current_user
-        # This happens when session expires but Flask-Login hasn't fully cleared it yet
-        if '_user_id' in session and not current_user.is_authenticated:
-            try:
-                user_id = session.get('_user_id')
-                if user_id:
-                    # Clean up all user data using the initialized file manager
-                    cleanup_result = file_manager.delete_all_user_data(
-                        user_id=int(user_id),
-                        ip_address=request.remote_addr or 'session_cleanup'
-                    )
-                    app.logger.info(f"Session cleanup for expired user {user_id}: {cleanup_result}")
-                    
-                # Clear the session completely
-                session.clear()
-                
-            except Exception as e:
-                app.logger.error(f"Error during session cleanup: {e}")
-                session.clear()
+    # @app.before_request
+    # def cleanup_expired_sessions():
+    #     """Clean up user data when session expires or becomes invalid."""
+    #     # Skip for static files and auth routes to avoid recursion
+    #     if (request.endpoint and 
+    #         (request.endpoint.startswith('static') or 
+    #          request.endpoint.startswith('auth.login') or
+    #          request.endpoint.startswith('auth.register'))):
+    #         return
+    #         
+    #     # Check if we have a user ID in session but no valid current_user
+    #     # This happens when session expires but Flask-Login hasn't fully cleared it yet
+    #     if '_user_id' in session and not current_user.is_authenticated:
+    #         try:
+    #             user_id = session.get('_user_id')
+    #             if user_id:
+    #                 # Clean up all user data using the initialized file manager
+    #                 cleanup_result = file_manager.delete_all_user_data(
+    #                     user_id=int(user_id),
+    #                     ip_address=request.remote_addr or 'session_cleanup'
+    #                 )
+    #                 app.logger.info(f"Session cleanup for expired user {user_id}: {cleanup_result}")
+    #                 
+    #             # Clear the session completely
+    #             session.clear()
+    #             
+    #         except Exception as e:
+    #             app.logger.error(f"Error during session cleanup: {e}")
+    #             session.clear()
 
 def register_blueprints(app):
     """Register application blueprints."""
     app.register_blueprint(main_blueprint)
-    app.register_blueprint(auth_blueprint)
+    # app.register_blueprint(auth_blueprint)  # Disabled - no authentication
     app.register_blueprint(api_blueprint)
 
 def add_template_filters(app):
@@ -318,56 +312,7 @@ def create_database_tables():
         print(f"Error creating database tables: {e}")
         # Continue execution even if database setup fails
 
-def create_default_admin():
-    """Create default admin user if no admin exists."""
-    try:
-        # Ensure database tables exist first
-        db.create_all()
-        
-        # Check if any admin user exists
-        admin_exists = User.query.filter_by(is_admin=True).first()
-        
-        if not admin_exists:
-            # Get admin credentials from environment variables
-            admin_email = os.environ.get('ADMIN_EMAIL', 'admin@prabuddh.in')
-            admin_password = os.environ.get('ADMIN_PASSWORD', 'SecureAdminPass123!')
-            admin_name = os.environ.get('ADMIN_NAME', 'System Administrator')
-            
-            print(f"Creating admin user with email: {admin_email}")
-            
-            # Create default admin user from environment variables
-            admin_user = User(
-                email=admin_email,
-                full_name=admin_name,
-                is_active=True,
-                is_admin=True
-            )
-            admin_user.set_password(admin_password)
-            admin_user.approved_at = datetime.utcnow()
-            
-            # Add to database
-            db.session.add(admin_user)
-            db.session.commit()
-            
-            print(f"✅ Default admin user created successfully!")
-            print(f"   Email: {admin_email}")
-            print(f"   Name: {admin_name}")
-            print(f"   Active: True")
-            print(f"   Admin: True")
-            print("Admin user is now ready to approve other users!")
-            
-            # Verify the admin was created
-            verify_admin = User.query.filter_by(email=admin_email).first()
-            if verify_admin and verify_admin.is_admin:
-                print(f"✅ Admin user verification successful - ID: {verify_admin.id}")
-            else:
-                print("❌ Admin user verification failed")
-                
-        else:
-            print(f"ℹ️  Admin user already exists: {admin_exists.email}")
-        
-    except Exception as e:
-        print(f"❌ Error creating default admin user: {e}")
+def setup_health_checks(app):
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
         try:
@@ -469,45 +414,6 @@ def setup_health_checks(app):
                 'error': 'Failed to retrieve metrics'
             }), 500
 
-    @app.route('/debug/create-admin')
-    def debug_create_admin():
-        """Debug endpoint to manually create admin user."""
-        try:
-            # Get current admin status
-            admin_count = User.query.filter_by(is_admin=True).count()
-            
-            result = {
-                'before_creation': {
-                    'admin_users_count': admin_count,
-                    'total_users': User.query.count()
-                }
-            }
-            
-            # Try to create admin
-            create_default_admin()
-            
-            # Check after creation
-            admin_count_after = User.query.filter_by(is_admin=True).count()
-            admin_users = User.query.filter_by(is_admin=True).all()
-            
-            result['after_creation'] = {
-                'admin_users_count': admin_count_after,
-                'total_users': User.query.count(),
-                'admin_users': [{'id': u.id, 'email': u.email, 'name': u.full_name, 'active': u.is_active} for u in admin_users]
-            }
-            
-            result['success'] = True
-            result['message'] = 'Admin creation process completed'
-            
-            return jsonify(result), 200
-            
-        except Exception as e:
-            return jsonify({
-                'success': False,
-                'error': str(e),
-                'message': 'Failed to create admin user'
-            }), 500
-
 def setup_request_handlers(app):
     """Set up global request handlers."""
     
@@ -541,27 +447,6 @@ def init_db():
     """Initialize the database."""
     db.create_all()
     print('Database tables created.')
-
-@app.cli.command()
-def create_admin():
-    """Create an admin user."""
-    email = input('Admin email: ')
-    password = input('Admin password: ')
-    name = input('Full name: ')
-    
-    admin_user = User(
-        email=email,
-        full_name=name,
-        is_active=True,
-        is_admin=True
-    )
-    admin_user.set_password(password)
-    admin_user.approved_at = datetime.utcnow()
-    
-    db.session.add(admin_user)
-    db.session.commit()
-    
-    print(f'Admin user {email} created successfully.')
 
 @app.cli.command()
 def cleanup_files():

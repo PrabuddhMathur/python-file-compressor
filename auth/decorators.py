@@ -1,127 +1,70 @@
 from functools import wraps
 from flask import jsonify, request, current_app
-from flask_login import current_user
 from models.audit_log import AuditLog
 
 def login_required_api(f):
-    """Decorator for API endpoints that require authentication."""
+    """Decorator for API endpoints - DISABLED (no authentication required)."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if not current_user.is_authenticated:
-            return jsonify({
-                'success': False,
-                'message': 'Authentication required'
-            }), 401
+        # No authentication required - just call the function
         return f(*args, **kwargs)
     return decorated_function
 
 def active_user_required(f):
-    """Decorator that requires user to be active (approved)."""
+    """Decorator that required user to be active - DISABLED (no authentication)."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if not current_user.is_authenticated:
-            return jsonify({
-                'success': False,
-                'message': 'Authentication required'
-            }), 401
-        
-        if not current_user.is_active:
-            return jsonify({
-                'success': False,
-                'message': 'Account pending approval. Please contact administrator.'
-            }), 403
-        
+        # No authentication required - just call the function
         return f(*args, **kwargs)
     return decorated_function
 
 def admin_required(f):
-    """Decorator that requires admin privileges."""
+    """Decorator that required admin privileges - DISABLED (no authentication)."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if not current_user.is_authenticated:
-            return jsonify({
-                'success': False,
-                'message': 'Authentication required'
-            }), 401
-        
-        if not current_user.is_active:
-            return jsonify({
-                'success': False,
-                'message': 'Account pending approval'
-            }), 403
-        
-        if not current_user.is_admin:
-            # Log unauthorized admin access attempt
-            AuditLog.log_security_event(
-                user_id=current_user.id,
-                ip_address=request.remote_addr,
-                event_type='unauthorized_admin_access',
-                user_agent=request.headers.get('User-Agent'),
-                endpoint=request.endpoint
-            )
-            return jsonify({
-                'success': False,
-                'message': 'Admin privileges required'
-            }), 403
-        
+        # No authentication required - just call the function
         return f(*args, **kwargs)
     return decorated_function
 
-def rate_limit_check(limit_type='general'):
-    """Decorator to check rate limits."""
+def role_required(*roles):
+    """Decorator that checks user role - DISABLED (no authentication)."""
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            if not current_app.config.get('RATE_LIMITS_ENABLED', True):
-                return f(*args, **kwargs)
-            
-            if not current_user.is_authenticated:
-                return f(*args, **kwargs)  # Let other decorators handle auth
-            
-            # Check rate limits based on type
-            if limit_type == 'upload':
-                # This will be handled in the upload endpoint itself
-                # as it needs file size information
-                pass
-            elif limit_type == 'login':
-                # Login rate limiting would be implemented here
-                # For now, we'll skip this as it requires more complex tracking
-                pass
-            
+            # No authentication required - just call the function
             return f(*args, **kwargs)
         return decorated_function
     return decorator
 
 def log_api_access(action_name):
-    """Decorator to log API access."""
+    """Decorator to log API access (simplified without user authentication)."""
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             # Execute the function first
             result = f(*args, **kwargs)
             
-            # Log the action if user is authenticated
-            if current_user.is_authenticated:
-                try:
-                    # Determine if the action was successful based on response
-                    success = True
-                    if hasattr(result, 'status_code'):
-                        success = result.status_code < 400
-                    elif isinstance(result, tuple) and len(result) > 1:
-                        success = result[1] < 400
-                    
-                    # Only log successful actions to avoid spam
-                    if success:
-                        AuditLog.log_action(
-                            user_id=current_user.id,
-                            action=action_name,
-                            ip_address=request.remote_addr,
-                            user_agent=request.headers.get('User-Agent'),
-                            endpoint=request.endpoint
-                        )
-                except Exception as e:
-                    # Don't let logging errors break the request
-                    current_app.logger.warning(f"Failed to log API access: {e}")
+            # Log the action without user context
+            try:
+                # Determine if the action was successful based on response
+                success = True
+                if hasattr(result, 'status_code'):
+                    success = result.status_code < 400
+                elif isinstance(result, tuple) and len(result) > 1:
+                    success = result[1] < 400
+                
+                # Only log successful actions to avoid spam
+                if success:
+                    AuditLog.log_action(
+                        user_id=None,  # No user authentication
+                        action=action_name,
+                        ip_address=request.remote_addr,
+                        user_agent=request.headers.get('User-Agent'),
+                        endpoint=request.endpoint
+                    )
+            except Exception as e:
+                # Don't let logging errors break the request
+                current_app.logger.warning(f"Failed to log API access: {e}")
             
             return result
         return decorated_function
@@ -132,31 +75,31 @@ def validate_json_request(required_fields=None):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            if not request.is_json:
-                return jsonify({
-                    'success': False,
-                    'message': 'Request must be JSON'
-                }), 400
-            
-            data = request.get_json()
-            if not data:
-                return jsonify({
-                    'success': False,
-                    'message': 'Invalid JSON data'
-                }), 400
-            
-            # Check required fields
-            if required_fields:
-                missing_fields = []
-                for field in required_fields:
-                    if field not in data or not data[field]:
-                        missing_fields.append(field)
-                
-                if missing_fields:
+            if request.content_type and 'application/json' in request.content_type:
+                if not request.is_json:
                     return jsonify({
                         'success': False,
-                        'message': f'Missing required fields: {", ".join(missing_fields)}'
+                        'message': 'Invalid JSON format'
                     }), 400
+                
+                data = request.get_json()
+                if data is None:
+                    return jsonify({
+                        'success': False,
+                        'message': 'No JSON data provided'
+                    }), 400
+                
+                if required_fields:
+                    missing_fields = []
+                    for field in required_fields:
+                        if field not in data or not data[field]:
+                            missing_fields.append(field)
+                    
+                    if missing_fields:
+                        return jsonify({
+                            'success': False,
+                            'message': f'Missing required fields: {", ".join(missing_fields)}'
+                        }), 400
             
             return f(*args, **kwargs)
         return decorated_function

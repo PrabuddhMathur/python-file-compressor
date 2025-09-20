@@ -587,25 +587,37 @@ function setupSessionManagement() {
     
     if (confirmBtn) {
         confirmBtn.addEventListener('click', function() {
-            fetch('/api/user/clear-session', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': document.querySelector('meta[name=csrf-token]').getAttribute('content')
-                }
-            }).then(response => response.json())
-              .then(data => {
-                  if (data.success) {
-                      location.reload();
-                  } else {
-                      alert('Error: ' + data.message);
-                  }
-              });
+            // Use SessionManager's clearSession method instead of direct API call
+            if (window.SessionManager) {
+                window.SessionManager.clearSession().then(() => {
+                    location.reload();
+                }).catch(error => {
+                    console.error('Session clear failed:', error);
+                    alert('Error clearing session');
+                });
+            } else {
+                // Fallback to direct API call if SessionManager not available
+                fetch('/api/user/clear-session', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': document.querySelector('meta[name=csrf-token]').getAttribute('content')
+                    }
+                }).then(response => response.json())
+                  .then(data => {
+                      if (data.success) {
+                          location.reload();
+                      } else {
+                          alert('Error: ' + data.message);
+                      }
+                  });
+            }
         });
     }
 }
 
-function clearSession() {
+// Create a showSessionModal function instead of overriding clearSession
+function showSessionModal() {
     document.getElementById('sessionModal').classList.remove('hidden');
 }
 

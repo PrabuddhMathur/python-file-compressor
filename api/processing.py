@@ -1,10 +1,10 @@
-from flask import request, jsonify, current_app, send_file
-from flask_login import current_user
+from flask import request, jsonify, current_app, send_file, session
 from werkzeug.utils import secure_filename
 import os
+import uuid
 from datetime import datetime
 from . import api
-from auth.decorators import active_user_required, handle_exceptions, log_api_access
+from auth.decorators import handle_exceptions, log_api_access
 from models import db
 from models.processing_job import ProcessingJob
 from models.audit_log import AuditLog
@@ -14,12 +14,17 @@ from utils.validators import FileValidator, InputValidator
 from utils.security import rate_limiter
 
 @api.route('/process/upload', methods=['POST'])
-@active_user_required
 @handle_exceptions
 @log_api_access('file_upload')
 def upload_file():
-    """Upload and process PDF file."""
+    """Upload and process PDF file using session-based file management."""
     try:
+        # Generate or get session ID
+        if 'session_id' not in session:
+            session['session_id'] = str(uuid.uuid4())
+            session.permanent = True  # Make session permanent
+        session_id = session['session_id']
+        
         # Check if file is present in request
         if 'file' not in request.files:
             return jsonify({
@@ -61,28 +66,14 @@ def upload_file():
         file_info = validator.get_file_info(file)
         file_size = file_info['size']
         
-        # Check rate limits
-        can_upload, limit_message = rate_limiter.check_upload_limits(current_user, file_size)
-        if not can_upload:
-            AuditLog.log_rate_limit_exceeded(
-                user_id=current_user.id,
-                ip_address=request.remote_addr,
-                limit_type='upload',
-                user_agent=request.headers.get('User-Agent')
-            )
-            
-            return jsonify({
-                'success': False,
-                'message': limit_message,
-                'error_type': 'rate_limit_exceeded'
-            }), 429
+        # Session-based rate limiting could be implemented here
+        # For now, we'll skip rate limiting for anonymous users
         
-        # First, create a temporary job ID to save the file
-        # We need to save the file first to get the upload_path before creating the job
-        temp_job_id = int(datetime.utcnow().timestamp() * 1000000) % 1000000  # Use timestamp as temp ID
+        # Create a temporary job ID to save the file
+        temp_job_id = int(datetime.utcnow().timestamp() * 1000000) % 1000000
         
-        # Save uploaded file first
-        upload_result = file_manager.save_uploaded_file(file, current_user.id, temp_job_id)
+        # Save uploaded file using session ID
+        upload_result = file_manager.save_uploaded_file(file, None, temp_job_id, session_id)
         
         if not upload_result['success']:
             return jsonify({
@@ -90,9 +81,10 @@ def upload_file():
                 'message': f"Failed to save file: {upload_result['error']}"
             }), 500
         
-        # Now create processing job with the upload_path
+        # Now create processing job with session_id
         job = ProcessingJob(
-            user_id=current_user.id,
+            user_id=None,  # No user authentication
+            session_id=session_id,  # Track with session
             original_filename=file.filename,
             original_size=file_size,
             quality_preset=quality_preset,
@@ -100,390 +92,424 @@ def upload_file():
             upload_path=upload_result['relative_path']
         )
         
-        db.session.add(job)
-        db.session.flush()  # Get the real job ID
-        
-        # Update the saved file with the correct job ID if needed
-        if temp_job_id != job.id:
-            # We might need to rename the file to use the correct job ID
-            # But for now, let's keep using the upload_path as is
-            pass
-        
-        # Update user usage counters
-        rate_limiter.update_upload_counters(current_user, file_size)
-        
-        db.session.commit()
-        
-        # Get processed file path
-        input_path = upload_result['file_path']
-        output_path = file_manager.get_processed_file_path(
-            current_user.id, job.id, file.filename
-        )
-        
-        # Start processing asynchronously
-        pdf_processor.process_pdf_async(job.id, input_path, output_path, quality_preset)
-        
-        # Get estimated processing time
-        estimated_time = pdf_processor.estimate_processing_time(file_size, quality_preset)
-        
-        return jsonify({
-            'success': True,
-            'job_id': job.id,
-            'message': 'File uploaded successfully and processing started',
-            'estimated_time': estimated_time,
-            'file_info': {
-                'filename': file_info['filename'],
-                'size': file_info['size'],
-                'size_mb': file_info['size_mb'],
-                'quality_preset': quality_preset
-            }
-        }), 201
-    
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"Upload failed: {e}")
-        
-        # Check if it's a 413 error and re-raise it
-        from werkzeug.exceptions import RequestEntityTooLarge
-        if isinstance(e, RequestEntityTooLarge):
-            raise e
-            
-        return jsonify({
-            'success': False,
-            'message': 'Upload failed. Please try again.'
-        }), 500
-
-@api.route('/process/status/<int:job_id>', methods=['GET'])
-@active_user_required
-@handle_exceptions
-@log_api_access('job_status_check')
-def get_job_status(job_id):
-    """Get processing job status."""
-    try:
-        # Find job
-        job = ProcessingJob.query.get(job_id)
-        if not job:
-            return jsonify({
-                'success': False,
-                'message': 'Job not found'
-            }), 404
-        
-        # Check if user owns this job
-        if job.user_id != current_user.id:
-            return jsonify({
-                'success': False,
-                'message': 'Access denied'
-            }), 403
-        
-        # Check if job is expired
-        if job.is_expired:
-            job.expire_job()
+        try:
+            db.session.add(job)
             db.session.commit()
-        
-        # Get job status data
-        job_data = job.to_dict()
-        
-        # Add download URL if completed
-        if job.status == 'completed' and job.processed_path:
-            job_data['download_url'] = f"/api/process/download/{job.id}"
-        
-        # Add quality preset info
-        preset_info = pdf_processor.get_quality_preset_info(job.quality_preset)
-        if preset_info:
-            job_data['quality_info'] = preset_info
-        
-        return jsonify({
-            'success': True,
-            'job': job_data
-        }), 200
-    
-    except Exception as e:
-        current_app.logger.error(f"Failed to get job status for {job_id}: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Failed to retrieve job status'
-        }), 500
-
-@api.route('/process/download/<int:job_id>', methods=['GET'])
-@active_user_required
-@handle_exceptions
-@log_api_access('file_download')
-def download_file(job_id):
-    """Download processed file."""
-    try:
-        # Find job
-        job = ProcessingJob.query.get(job_id)
-        if not job:
+            
+            # File paths are already set correctly in upload_result
+            
+        except Exception as e:
+            db.session.rollback()
+            # Clean up uploaded file if database operation fails
+            try:
+                file_manager.delete_uploaded_file(upload_result['relative_path'])
+            except:
+                pass
             return jsonify({
                 'success': False,
-                'message': 'Job not found'
-            }), 404
+                'message': 'Error creating processing job'
+            }), 500
         
-        # Check if user owns this job
-        if job.user_id != current_user.id:
-            return jsonify({
-                'success': False,
-                'message': 'Access denied'
-            }), 403
-        
-        # Check if job is completed
-        if job.status != 'completed':
-            return jsonify({
-                'success': False,
-                'message': 'File is not ready for download'
-            }), 400
-        
-        # Check if job is expired
-        if job.is_expired:
-            return jsonify({
-                'success': False,
-                'message': 'Download link has expired'
-            }), 410
-        
-        # Get file path
-        file_path = file_manager.get_file_download_path(job)
-        if not file_path:
-            return jsonify({
-                'success': False,
-                'message': 'File not found or access denied'
-            }), 404
-        
-        # Log download
-        AuditLog.log_file_download(
-            user_id=current_user.id,
-            job_id=job_id,
+        # Log file upload
+        AuditLog.log_file_upload(
+            user_id=None,  # No user authentication
+            filename=file.filename,
+            file_size=file_size,
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent')
         )
         
-        # Generate download filename
-        original_name, ext = os.path.splitext(job.original_filename)
-        download_filename = f"{original_name}_compressed_{job.quality_preset}.{ext.lstrip('.')}"
+        # Process file immediately
+        try:
+            # Update processing status
+            job.status = 'processing'
+            job.start_processing()
+            db.session.commit()
+            
+            # Generate output path for processed file
+            output_path = file_manager.get_processed_file_path(
+                user_id=None, 
+                job_id=job.id, 
+                original_filename=file.filename,
+                session_id=session_id
+            )
+            
+            # Process the PDF
+            processing_result = pdf_processor.process_pdf(
+                job_id=job.id,
+                input_path=upload_result['file_path'],
+                output_path=output_path,  # Now properly set
+                quality_preset=quality_preset
+            )
+            
+            if processing_result['success']:
+                # Update job with results
+                job.status = 'completed'
+                job.completed_at = datetime.utcnow()
+                job.processed_size = processing_result.get('processed_size', 0)
+                job.compression_ratio = processing_result.get('compression_ratio', 0.0)
+                job.processed_path = processing_result.get('relative_path', '')
+                
+                # Log processing completion
+                AuditLog.log_processing_complete(
+                    user_id=None,  # No user authentication
+                    job_id=job.id,
+                    processing_time=(job.completed_at - job.started_at).total_seconds(),
+                    ip_address=request.remote_addr,
+                    user_agent=request.headers.get('User-Agent')
+                )
+                
+            else:
+                job.status = 'failed'
+                job.error_message = processing_result.get('error', 'Unknown processing error')
+                job.completed_at = datetime.utcnow()
+                
+                # Log processing failure
+                AuditLog.log_processing_failed(
+                    user_id=None,  # No user authentication
+                    job_id=job.id,
+                    error_message=job.error_message,
+                    ip_address=request.remote_addr,
+                    user_agent=request.headers.get('User-Agent')
+                )
+            
+            db.session.commit()
+            
+        except Exception as e:
+            current_app.logger.error(f"Processing error for job {job.id}: {e}")
+            job.status = 'failed'
+            job.error_message = str(e)
+            job.completed_at = datetime.utcnow()
+            db.session.commit()
         
-        # Send file
-        return send_file(
-            file_path,
-            as_attachment=True,
-            download_name=download_filename,
-            mimetype='application/pdf'
-        )
-    
+        # Return job status and details
+        response_data = {
+            'success': True,
+            'job': {
+                'id': job.id,
+                'status': job.status,
+                'original_filename': job.original_filename,
+                'original_size': job.original_size,
+                'processed_size': job.processed_size,
+                'compression_ratio': job.compression_ratio,
+                'quality_preset': job.quality_preset,
+                'created_at': job.created_at.isoformat(),
+                'started_at': job.started_at.isoformat() if job.started_at else None,
+                'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+                'error_message': job.error_message
+            }
+        }
+        
+        return jsonify(response_data), 200 if job.status == 'completed' else 202
+        
     except Exception as e:
-        current_app.logger.error(f"Download failed for job {job_id}: {e}")
+        current_app.logger.error(f"Upload API error: {e}")
         return jsonify({
             'success': False,
-            'message': 'Download failed'
+            'message': 'Internal server error during file upload'
         }), 500
 
-@api.route('/process/clear-session', methods=['POST'])
-@active_user_required
-@handle_exceptions
-@log_api_access('clear_session')
-def clear_session():
-    """Clear all session files for the current user."""
-    try:
-        # Clear session files
-        result = file_manager.clear_user_session_files(current_user.id)
-        
-        if result['success']:
-            # Update rate limiter
-            rate_limiter.clear_user_session_storage(current_user)
-            
-            return jsonify({
-                'success': True,
-                'message': 'Session files cleared successfully',
-                'files_cleared': result['files_cleared'],
-                'jobs_affected': result['jobs_affected']
-            }), 200
-        else:
-            return jsonify({
-                'success': False,
-                'message': f"Failed to clear session: {result['error']}"
-            }), 500
-    
-    except Exception as e:
-        current_app.logger.error(f"Failed to clear session for user {current_user.id}: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Failed to clear session'
-        }), 500
 
-@api.route('/process/jobs', methods=['GET'])
-@active_user_required
+@api.route('/process/session/info', methods=['GET'])
 @handle_exceptions
-@log_api_access('list_user_jobs')
-def get_user_jobs():
-    """Get user's processing jobs."""
+@log_api_access('session_info')
+def get_session_info():
+    """Get current session information for debugging."""
     try:
-        status_filter = request.args.get('status', 'all')  # all, active, completed, failed
-        limit = min(request.args.get('limit', 50, type=int), 100)
-        
-        # Build query
-        query = ProcessingJob.query.filter_by(user_id=current_user.id)
-        
-        if status_filter == 'active':
-            query = query.filter(ProcessingJob.status.in_(['pending', 'processing']))
-        elif status_filter == 'completed':
-            query = query.filter_by(status='completed')
-        elif status_filter == 'failed':
-            query = query.filter_by(status='failed')
-        
-        # Get jobs
-        jobs = query.order_by(ProcessingJob.created_at.desc()).limit(limit).all()
-        
-        jobs_data = []
-        for job in jobs:
-            job_data = job.to_dict()
-            
-            # Add download URL if completed and not expired
-            if job.status == 'completed' and job.processed_path and not job.is_expired:
-                job_data['download_url'] = f"/api/process/download/{job.id}"
-            
-            # Add quality preset info
-            preset_info = pdf_processor.get_quality_preset_info(job.quality_preset)
-            if preset_info:
-                job_data['quality_info'] = preset_info
-            
-            jobs_data.append(job_data)
+        session_id = session.get('session_id')
         
         return jsonify({
             'success': True,
-            'jobs': jobs_data,
-            'total': len(jobs_data)
+            'session_id': session_id,
+            'session_permanent': session.permanent,
+            'session_keys': list(session.keys())
         }), 200
-    
+        
     except Exception as e:
-        current_app.logger.error(f"Failed to get user jobs: {e}")
+        current_app.logger.error(f"Session info API error: {e}")
         return jsonify({
             'success': False,
-            'message': 'Failed to retrieve jobs'
+            'message': 'Error retrieving session info'
+        }), 500
+        
+        # Return job status and details
+        response_data = {
+            'success': True,
+            'job': {
+                'id': job.id,
+                'status': job.status,
+                'original_filename': job.original_filename,
+                'original_size': job.original_size,
+                'processed_size': job.processed_size,
+                'compression_ratio': job.compression_ratio,
+                'quality_preset': job.quality_preset,
+                'created_at': job.created_at.isoformat(),
+                'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+                'error_message': job.error_message
+            }
+        }
+        
+        return jsonify(response_data), 200 if job.status == 'completed' else 202
+        
+    except Exception as e:
+        current_app.logger.error(f"Upload API error: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Internal server error during file upload'
         }), 500
 
-@api.route('/process/retry/<int:job_id>', methods=['POST'])
-@active_user_required
+
+@api.route('/process/status/<int:job_id>', methods=['GET'])
 @handle_exceptions
-@log_api_access('retry_job')
-def retry_job(job_id):
-    """Retry a failed processing job."""
+@log_api_access('status_check')
+def get_job_status(job_id):
+    """Get processing job status using session verification."""
     try:
-        # Find job
+        # Get session ID
+        session_id = session.get('session_id')
+        if not session_id:
+            return jsonify({
+                'success': False,
+                'message': 'Session not found'
+            }), 401
+        
         job = ProcessingJob.query.get(job_id)
+        
         if not job:
             return jsonify({
                 'success': False,
                 'message': 'Job not found'
             }), 404
         
-        # Check if user owns this job
-        if job.user_id != current_user.id:
+        # Verify job belongs to this session
+        if job.session_id != session_id:
             return jsonify({
                 'success': False,
-                'message': 'Access denied'
+                'message': 'Access denied - job does not belong to your session'
             }), 403
         
-        # Check if job can be retried
-        if not job.can_retry():
+        response_data = {
+            'success': True,
+            'job': {
+                'id': job.id,
+                'status': job.status,
+                'original_filename': job.original_filename,
+                'original_size': job.original_size,
+                'processed_size': job.processed_size,
+                'compression_ratio': job.compression_ratio,
+                'quality_preset': job.quality_preset,
+                'created_at': job.created_at.isoformat(),
+                'started_at': job.started_at.isoformat() if job.started_at else None,
+                'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+                'error_message': job.error_message
+            }
+        }
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Status API error for job {job_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Error retrieving job status'
+        }), 500
+
+
+@api.route('/process/download/<int:job_id>', methods=['GET'])
+@handle_exceptions
+@log_api_access('download')
+def download_processed_file(job_id):
+    """Download processed file using session verification."""
+    try:
+        # Get session ID
+        session_id = session.get('session_id')
+        if not session_id:
             return jsonify({
                 'success': False,
-                'message': 'Job cannot be retried (expired or too many attempts)'
+                'message': 'Session not found'
+            }), 401
+        
+        job = ProcessingJob.query.get(job_id)
+        
+        if not job:
+            return jsonify({
+                'success': False,
+                'message': 'Job not found'
+            }), 404
+        
+        # Verify job belongs to this session
+        if job.session_id != session_id:
+            return jsonify({
+                'success': False,
+                'message': 'Access denied - job does not belong to your session'
+            }), 403
+        
+        if job.status != 'completed':
+            return jsonify({
+                'success': False,
+                'message': 'File processing not completed yet'
             }), 400
         
-        # Reset job for retry
-        if not job.reset_for_retry():
+        # Get processed file path
+        processed_path = job.get_processed_file_path()
+        
+        if not processed_path or not os.path.exists(processed_path):
             return jsonify({
                 'success': False,
-                'message': 'Failed to reset job for retry'
-            }), 500
+                'message': 'Processed file not found'
+            }), 404
         
-        db.session.commit()
+        # Generate safe filename
+        original_name = job.original_filename or 'compressed_file.pdf'
+        name_parts = os.path.splitext(original_name)
+        download_filename = f"{name_parts[0]}_compressed{name_parts[1]}"
         
-        # Get file paths
-        input_path = os.path.join(file_manager.upload_folder, job.upload_path)
-        output_path = file_manager.get_processed_file_path(
-            current_user.id, job.id, job.original_filename
+        # Log download
+        AuditLog.log_file_download(
+            user_id=None,  # No user authentication
+            job_id=job.id,
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent')
         )
         
-        # Start processing asynchronously
-        pdf_processor.process_pdf_async(job.id, input_path, output_path, job.quality_preset)
+        return send_file(
+            processed_path,
+            as_attachment=True,
+            download_name=download_filename,
+            mimetype='application/pdf'
+        )
+        
+    except Exception as e:
+        current_app.logger.error(f"Download API error for job {job_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Error downloading file'
+        }), 500
+
+
+@api.route('/process/session/clear', methods=['POST'])
+@handle_exceptions
+@log_api_access('session_clear')
+def clear_session():
+    """Clear all files and jobs for current session."""
+    try:
+        # Get session ID
+        session_id = session.get('session_id')
+        if not session_id:
+            return jsonify({
+                'success': False,
+                'message': 'No session to clear'
+            }), 400
+        
+        # Clear session files
+        result = file_manager.clear_session_files(session_id)
+        
+        # Clear session
+        session.clear()
         
         return jsonify({
             'success': True,
-            'message': 'Job retry started',
-            'job_id': job.id
+            'message': 'Session cleared successfully',
+            'files_cleared': result.get('files_cleared', 0),
+            'jobs_affected': result.get('jobs_affected', 0)
         }), 200
-    
+        
     except Exception as e:
+        current_app.logger.error(f"Session clear API error: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Error clearing session'
+        }), 500
+
+
+@api.route('/process/session/jobs', methods=['GET'])
+@handle_exceptions
+@log_api_access('session_jobs')
+def get_session_jobs():
+    """Get all jobs for current session."""
+    try:
+        # Get session ID
+        session_id = session.get('session_id')
+        if not session_id:
+            return jsonify({
+                'success': True,
+                'jobs': []
+            }), 200
+        
+        # Get session jobs
+        jobs = ProcessingJob.get_session_active_jobs(session_id)
+        
+        jobs_data = []
+        for job in jobs:
+            jobs_data.append({
+                'id': job.id,
+                'status': job.status,
+                'original_filename': job.original_filename,
+                'original_size': job.original_size,
+                'processed_size': job.processed_size,
+                'compression_ratio': job.compression_ratio,
+                'quality_preset': job.quality_preset,
+                'created_at': job.created_at.isoformat(),
+                'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+                'error_message': job.error_message
+            })
+        
+        return jsonify({
+            'success': True,
+            'jobs': jobs_data
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Session jobs API error: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Error retrieving session jobs'
+        }), 500
+@api.route('/process/delete/<int:job_id>', methods=['DELETE'])
+@handle_exceptions
+@log_api_access('delete')
+def delete_job(job_id):
+    """Delete processing job and associated files (no authentication required)."""
+    try:
+        job = ProcessingJob.query.get(job_id)
+        
+        if not job:
+            return jsonify({
+                'success': False,
+                'message': 'Job not found'
+            }), 404
+        
+        # Since no authentication, anyone can delete any job
+        # Note: This removes security - in production you might want to add some other protection
+        
+        # Delete associated files
+        delete_result = file_manager.delete_job_files(job.id, None)  # No user_id
+        
+        # Delete job from database
+        db.session.delete(job)
+        db.session.commit()
+        
+        # Log deletion
+        AuditLog.log_action(
+            user_id=None,  # No user authentication
+            action='file_deletion',
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent'),
+            resource_type='job',
+            resource_id=str(job_id),
+            filename=job.original_filename
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Job deleted successfully',
+            'file_deletion': delete_result
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Delete API error for job {job_id}: {e}")
         db.session.rollback()
-        current_app.logger.error(f"Failed to retry job {job_id}: {e}")
         return jsonify({
             'success': False,
-            'message': 'Failed to retry job'
-        }), 500
-
-@api.route('/process/presets', methods=['GET'])
-@active_user_required
-@handle_exceptions
-def get_quality_presets():
-    """Get available quality presets."""
-    try:
-        presets = pdf_processor.get_available_presets()
-        
-        return jsonify({
-            'success': True,
-            'presets': presets
-        }), 200
-    
-    except Exception as e:
-        current_app.logger.error(f"Failed to get quality presets: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Failed to retrieve quality presets'
-        }), 500
-
-@api.route('/process/estimate', methods=['POST'])
-@active_user_required
-@handle_exceptions
-def estimate_processing_time():
-    """Estimate processing time for given file size and quality."""
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({
-                'success': False,
-                'message': 'Request data required'
-            }), 400
-        
-        file_size = data.get('file_size')
-        quality_preset = data.get('quality_preset', 'medium')
-        
-        if not file_size:
-            return jsonify({
-                'success': False,
-                'message': 'File size is required'
-            }), 400
-        
-        # Validate quality preset
-        is_valid, message = InputValidator.validate_quality_preset(quality_preset)
-        if not is_valid:
-            return jsonify({
-                'success': False,
-                'message': message
-            }), 400
-        
-        # Get estimate
-        estimated_time = pdf_processor.estimate_processing_time(file_size, quality_preset)
-        preset_info = pdf_processor.get_quality_preset_info(quality_preset)
-        
-        return jsonify({
-            'success': True,
-            'estimated_time': estimated_time,
-            'quality_info': preset_info,
-            'file_size_mb': round(file_size / (1024 * 1024), 2)
-        }), 200
-    
-    except Exception as e:
-        current_app.logger.error(f"Failed to estimate processing time: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Failed to estimate processing time'
+            'message': 'Error deleting job'
         }), 500

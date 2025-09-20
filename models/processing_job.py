@@ -1,11 +1,13 @@
 from datetime import datetime, timedelta
+import os
 from . import db
 
 class ProcessingJob(db.Model):
     """Processing job model for PDF compression tasks."""
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)  # Allow null for no authentication
+    session_id = db.Column(db.String(255), nullable=True)  # Session-based file management
     
     # File information
     original_filename = db.Column(db.String(255), nullable=False)
@@ -68,6 +70,26 @@ class ProcessingJob(db.Model):
             return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
         else:
             return f"{int(minutes):02d}:{int(seconds):02d}"
+    
+    def get_processed_file_path(self):
+        """Get full path to processed file."""
+        if not self.processed_path:
+            return None
+        
+        # Import here to avoid circular import
+        from services.file_manager import file_manager
+        
+        # Try different path constructions
+        possible_paths = [
+            self.processed_path,
+            os.path.join(file_manager.upload_folder, self.processed_path)
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                return path
+        
+        return None
     
     def start_processing(self):
         """Mark job as started."""
@@ -210,6 +232,30 @@ class ProcessingJob(db.Model):
         ).filter(
             ProcessingJob.expires_at > datetime.utcnow()
         ).order_by(ProcessingJob.created_at.desc()).all()
+    
+    @staticmethod
+    def get_session_active_jobs(session_id):
+        """Get all active jobs for a session."""
+        return ProcessingJob.query.filter_by(session_id=session_id).filter(
+            ProcessingJob.status.in_(['pending', 'processing', 'completed'])
+        ).filter(
+            ProcessingJob.expires_at > datetime.utcnow()
+        ).order_by(ProcessingJob.created_at.desc()).all()
+    
+    @staticmethod
+    def cleanup_session_jobs(session_id):
+        """Mark all session jobs as expired and ready for cleanup."""
+        session_jobs = ProcessingJob.query.filter_by(session_id=session_id).filter(
+            ProcessingJob.status.in_(['pending', 'processing', 'completed'])
+        ).all()
+        
+        for job in session_jobs:
+            job.status = 'expired'
+        
+        if session_jobs:
+            db.session.commit()
+        
+        return len(session_jobs)
     
     @staticmethod
     def get_user_job_history(user_id, limit=50):

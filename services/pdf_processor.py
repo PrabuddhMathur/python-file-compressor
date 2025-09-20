@@ -63,8 +63,12 @@ class PDFProcessor:
                 original_size = os.path.getsize(input_path)
                 processed_size = os.path.getsize(output_path)
                 
+                # Store relative path for the processed file
+                from services.file_manager import file_manager
+                relative_path = os.path.relpath(output_path, file_manager.upload_folder)
+                
                 # Update job with success
-                job.complete_processing(processed_size, output_path)
+                job.complete_processing(processed_size, relative_path)
                 db.session.commit()
                 
                 # Log successful processing
@@ -77,7 +81,13 @@ class PDFProcessor:
                     processing_time=processing_time
                 )
                 
-                return True, f"PDF processed successfully. Compression ratio: {compression_ratio:.2f}"
+                return {
+                    'success': True,
+                    'message': f"PDF processed successfully. Compression ratio: {compression_ratio:.2f}",
+                    'processed_size': processed_size,
+                    'compression_ratio': compression_ratio,
+                    'relative_path': relative_path
+                }
             
             else:
                 error_msg = "Ghostscript processing failed"
@@ -91,7 +101,10 @@ class PDFProcessor:
                     error_message=error_msg
                 )
                 
-                return False, error_msg
+                return {
+                    'success': False,
+                    'error': error_msg
+                }
         
         except Exception as e:
             error_msg = str(e)
@@ -112,7 +125,10 @@ class PDFProcessor:
             except Exception as db_error:
                 current_app.logger.error(f"Failed to update job status: {db_error}")
             
-            return False, error_msg
+            return {
+                'success': False,
+                'error': error_msg
+            }
     
     def process_pdf_async(self, job_id, input_path, output_path, quality_preset):
         """Process PDF asynchronously in background thread."""
