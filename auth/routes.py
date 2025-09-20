@@ -27,6 +27,21 @@ def validate_password(password):
     
     return True, "Password is valid"
 
+@auth.route('/test', methods=['GET'])
+def test():
+    """Simple test endpoint for debugging."""
+    try:
+        return jsonify({
+            'status': 'success',
+            'message': 'Auth service is working',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
 # Template routes (GET)
 @auth.route('/login', methods=['GET'])
 def login_page():
@@ -198,18 +213,33 @@ def login():
             return render_template('auth/login.html'), 400
     
     # Find user
-    user = User.query.filter_by(email=email).first()
+    try:
+        user = User.query.filter_by(email=email).first()
+    except Exception as e:
+        current_app.logger.error(f"Database error during login: {e}")
+        error_message = 'Service temporarily unavailable. Please try again.'
+        if is_api_request:
+            return jsonify({
+                'success': False,
+                'message': error_message
+            }), 503
+        else:
+            flash(error_message, 'error')
+            return render_template('auth/login.html'), 503
     
     # Check credentials
     if not user or not user.check_password(password):
-        # Log failed login attempt
-        user_id = user.id if user else None
-        AuditLog.log_login(
-            user_id=user_id,
-            ip_address=request.remote_addr,
-            user_agent=request.headers.get('User-Agent'),
-            success=False
-        )
+        # Log failed login attempt (with error handling)
+        try:
+            user_id = user.id if user else None
+            AuditLog.log_login(
+                user_id=user_id,
+                ip_address=request.remote_addr,
+                user_agent=request.headers.get('User-Agent'),
+                success=False
+            )
+        except Exception as e:
+            current_app.logger.error(f"Error logging failed login: {e}")
         
         error_message = 'Invalid email or password'
         if is_api_request:
@@ -223,12 +253,15 @@ def login():
     
     # Check if user is active
     if not user.is_active:
-        AuditLog.log_action(
-            user_id=user.id,
-            action='login_inactive_account',
-            ip_address=request.remote_addr,
-            user_agent=request.headers.get('User-Agent')
-        )
+        try:
+            AuditLog.log_action(
+                user_id=user.id,
+                action='login_inactive_account',
+                ip_address=request.remote_addr,
+                user_agent=request.headers.get('User-Agent')
+            )
+        except Exception as e:
+            current_app.logger.error(f"Error logging inactive account attempt: {e}")
         
         error_message = 'Account pending approval. Please contact administrator.'
         if is_api_request:
@@ -244,17 +277,24 @@ def login():
     remember = request.form.get('remember-me') == 'on' if not is_api_request else data.get('remember', False)
     login_user(user, remember=remember)
     
-    # Log successful login
-    AuditLog.log_login(
-        user_id=user.id,
-        ip_address=request.remote_addr,
-        user_agent=request.headers.get('User-Agent'),
-        success=True
-    )
+    # Log successful login (with error handling)
+    try:
+        AuditLog.log_login(
+            user_id=user.id,
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent'),
+            success=True
+        )
+    except Exception as e:
+        current_app.logger.error(f"Error logging successful login: {e}")
     
-    # Update last login
-    user.last_login = datetime.utcnow()
-    db.session.commit()
+    # Update last login (with error handling)
+    try:
+        user.last_login = datetime.utcnow()
+        db.session.commit()
+    except Exception as e:
+        current_app.logger.error(f"Error updating last login: {e}")
+        db.session.rollback()
     
     if is_api_request:
         return jsonify({

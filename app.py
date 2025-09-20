@@ -33,10 +33,21 @@ from utils.timezone import utc_to_ist, format_ist_datetime, format_ist_iso
 def create_app(config_name=None):
     """Create Flask application."""
     if config_name is None:
-        config_name = os.environ.get('FLASK_ENV', 'development')
+        # Check if running on Vercel
+        if os.environ.get('VERCEL'):
+            config_name = 'production'
+        else:
+            config_name = os.environ.get('FLASK_ENV', 'development')
     
     app = Flask(__name__)
     app.config.from_object(config[config_name])
+    
+    # For Vercel, ensure storage directories exist
+    if os.environ.get('VERCEL') or config_name == 'production':
+        storage_dirs = ['/tmp/storage', '/tmp/storage/uploads', '/tmp/storage/processed', '/tmp/storage/temp']
+        for dir_path in storage_dirs:
+            os.makedirs(dir_path, exist_ok=True)
+        app.config['UPLOAD_FOLDER'] = '/tmp/storage'
     
     # Initialize extensions
     init_extensions(app)
@@ -56,10 +67,14 @@ def create_app(config_name=None):
     # Set up error handlers
     setup_error_handlers(app)
     
-    # Create database tables
+    # Create database tables (with error handling for serverless)
     with app.app_context():
-        create_database_tables()
-        create_default_admin()
+        try:
+            create_database_tables()
+            create_default_admin()
+        except Exception as e:
+            app.logger.error(f"Database initialization error: {e}")
+            # Continue without database for now
     
     # Add health check endpoints
     setup_health_checks(app)
@@ -164,23 +179,30 @@ def init_services(app):
 def setup_logging(app):
     """Set up application logging."""
     if not app.debug and not app.testing:
-        # Create logs directory if it doesn't exist
-        if not os.path.exists('logs'):
-            os.mkdir('logs')
-        
-        # Set up file handler
-        file_handler = RotatingFileHandler(
-            'logs/app.log',
-            maxBytes=10240000,  # 10MB
-            backupCount=10
-        )
-        
-        file_handler.setFormatter(logging.Formatter(
-            '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-        ))
-        
-        file_handler.setLevel(logging.INFO)
-        app.logger.addHandler(file_handler)
+        # For Vercel, just use console logging
+        if os.environ.get('VERCEL'):
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter(
+                '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+            ))
+            app.logger.addHandler(handler)
+        else:
+            # Local development - use file logging
+            if not os.path.exists('logs'):
+                os.mkdir('logs')
+            
+            file_handler = RotatingFileHandler(
+                'logs/app.log',
+                maxBytes=10240000,  # 10MB
+                backupCount=10
+            )
+            
+            file_handler.setFormatter(logging.Formatter(
+                '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+            ))
+            
+            file_handler.setLevel(logging.INFO)
+            app.logger.addHandler(file_handler)
         
         app.logger.setLevel(logging.INFO)
         app.logger.info('PDF Compressor application startup')
@@ -272,10 +294,19 @@ def setup_error_handlers(app):
 def create_database_tables():
     """Create database tables if they don't exist."""
     try:
-        db.create_all()
-        print("Database tables created successfully")
+        # Check if tables exist first
+        from sqlalchemy import inspect
+        inspector = inspect(db.engine)
+        existing_tables = inspector.get_table_names()
+        
+        if not existing_tables:
+            db.create_all()
+            print("Database tables created successfully")
+        else:
+            print("Database tables already exist")
     except Exception as e:
         print(f"Error creating database tables: {e}")
+        # Continue execution even if database setup fails
 
 def create_default_admin():
     """Create default admin user if no admin exists."""
@@ -461,7 +492,13 @@ def after_request(response):
     
     return response
 
+# Create app instance for both local and Vercel deployment
+app = create_app()
+
 if __name__ == '__main__':
-    # Development server
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    # Get port from environment variable (Vercel uses dynamic ports)
+    port = int(os.environ.get('PORT', 3000))
+    debug = os.environ.get('FLASK_DEBUG', '0').lower() in ('1', 'true', 'on')
+    
+    app.logger.info(f"Starting PDF Compressor on port {port} (debug={debug})")
+    app.run(host='0.0.0.0', port=port, debug=debug, threaded=True)

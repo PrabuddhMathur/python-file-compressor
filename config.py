@@ -154,6 +154,10 @@ class ProductionConfig(Config):
     """Production configuration."""
     DEBUG = False
     SESSION_COOKIE_SECURE = True
+    # Use in-memory SQLite for Vercel serverless deployment
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///:memory:'
+    # Use /tmp for file storage on Vercel
+    UPLOAD_FOLDER = '/tmp/storage'
 
 class TestingConfig(Config):
     """Testing configuration."""
