@@ -28,6 +28,7 @@ from main import main as main_blueprint
 from services.pdf_processor import pdf_processor
 from services.file_manager import file_manager
 from utils.security import rate_limiter
+from utils.timezone import utc_to_ist, format_ist_datetime, format_ist_iso
 
 def create_app(config_name=None):
     """Create Flask application."""
@@ -39,6 +40,9 @@ def create_app(config_name=None):
     
     # Initialize extensions
     init_extensions(app)
+    
+    # Add template filters
+    add_template_filters(app)
     
     # Register blueprints
     register_blueprints(app)
@@ -104,6 +108,19 @@ def register_blueprints(app):
     app.register_blueprint(main_blueprint)
     app.register_blueprint(auth_blueprint)
     app.register_blueprint(api_blueprint)
+
+def add_template_filters(app):
+    """Add custom template filters."""
+    
+    @app.template_filter('ist_datetime')
+    def ist_datetime_filter(dt, format_str='%Y-%m-%d %H:%M'):
+        """Convert UTC datetime to IST and format it."""
+        return format_ist_datetime(dt, format_str)
+    
+    @app.template_filter('ist_iso')
+    def ist_iso_filter(dt):
+        """Convert UTC datetime to IST ISO string for JavaScript."""
+        return format_ist_iso(dt)
 
 def init_services(app):
     """Initialize application services."""

@@ -98,6 +98,16 @@
         background: linear-gradient(135deg, #3b82f6, #1d4ed8);
         color: white;
     }
+    .relative-time-btn {
+        outline: none;
+        border: none;
+        background: transparent;
+        padding: 0;
+    }
+    .relative-time-btn:focus {
+        outline: none;
+        box-shadow: none;
+    }
 </style>
 {% endblock %}
 
@@ -205,7 +215,12 @@
                                         <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3a2 2 0 012-2h4a2 2 0 012 2v4M8 7v2a2 2 0 002 2h4a2 2 0 002-2V7M8 7H6a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V9a2 2 0 00-2-2h-2"/>
                                         </svg>
-                                        {{ job.created_at.strftime('%Y-%m-%d %H:%M') }}
+                                        <button class="relative-time-btn text-left hover:text-gray-700 transition-colors cursor-pointer" 
+                                                data-timestamp="{{ job.created_at | ist_iso }}" 
+                                                data-full-time="{{ job.created_at | ist_datetime }}"
+                                                onclick="toggleTimeDisplay(this)">
+                                            <span class="relative-time">{{ job.created_at | ist_datetime }}</span>
+                                        </button>
                                     </span>
                                     <span class="flex items-center">
                                         <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -496,6 +511,66 @@ document.querySelectorAll('.pagination-button').forEach(button => {
             this.classList.remove('opacity-50');
         }, 1000);
     });
+});
+
+// Relative time functionality
+function formatRelativeTime(timestamp) {
+    const now = new Date();
+    const time = new Date(timestamp);
+    const diffInSeconds = Math.floor((now - time) / 1000);
+    
+    if (diffInSeconds < 60) {
+        return diffInSeconds <= 5 ? 'now' : `${diffInSeconds} seconds ago`;
+    } else if (diffInSeconds < 3600) {
+        const minutes = Math.floor(diffInSeconds / 60);
+        return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
+    } else if (diffInSeconds < 86400) {
+        const hours = Math.floor(diffInSeconds / 3600);
+        return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
+    } else if (diffInSeconds < 604800) {
+        const days = Math.floor(diffInSeconds / 86400);
+        return `${days} day${days !== 1 ? 's' : ''} ago`;
+    } else {
+        const weeks = Math.floor(diffInSeconds / 604800);
+        return `${weeks} week${weeks !== 1 ? 's' : ''} ago`;
+    }
+}
+
+// Toggle between relative and absolute time display
+function toggleTimeDisplay(element) {
+    const span = element.querySelector('.relative-time');
+    const currentText = span.textContent;
+    const isRelative = !currentText.includes('-'); // Check if it's in relative format
+    
+    if (isRelative) {
+        // Switch to absolute format
+        span.textContent = element.dataset.fullTime;
+    } else {
+        // Switch to relative format
+        span.textContent = formatRelativeTime(element.dataset.timestamp);
+    }
+}
+
+// Initialize relative time display on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Convert all timestamps to relative time initially
+    document.querySelectorAll('.relative-time-btn').forEach(button => {
+        const span = button.querySelector('.relative-time');
+        const relativeTime = formatRelativeTime(button.dataset.timestamp);
+        span.textContent = relativeTime;
+    });
+    
+    // Update relative times every minute
+    setInterval(() => {
+        document.querySelectorAll('.relative-time-btn').forEach(button => {
+            const span = button.querySelector('.relative-time');
+            const currentText = span.textContent;
+            // Only update if currently showing relative time (not absolute)
+            if (!currentText.includes('-')) {
+                span.textContent = formatRelativeTime(button.dataset.timestamp);
+            }
+        });
+    }, 60000); // Update every minute
 });
 </script>
 {% endblock %}
